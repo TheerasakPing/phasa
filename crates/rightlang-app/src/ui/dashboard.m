@@ -9,10 +9,11 @@ static PhasaActionCallback g_open_config_cb = NULL;
 static PhasaActionCallback g_open_access_cb = NULL;
 static PhasaActionCallback g_poll_timer_cb = NULL;
 
-@interface PhasaWindowController : NSObject <NSWindowDelegate, NSTextFieldDelegate>
+@interface PhasaWindowController : NSObject <NSWindowDelegate, NSTextFieldDelegate, NSApplicationDelegate>
 @property (nonatomic, strong) NSWindow *window;
 @property (nonatomic, strong) NSTextField *statusBadge;
 @property (nonatomic, strong) NSButton *grantAccessButton;
+@property (nonatomic, strong) NSButton *resetAccessButton;
 @property (nonatomic, strong) NSTextField *playgroundInput;
 @property (nonatomic, strong) NSTextField *playgroundOutput;
 @property (nonatomic, strong) NSSegmentedControl *modeControl;
@@ -76,17 +77,25 @@ static PhasaWindowController *g_controller = nil;
     [contentView addSubview:statusHeader];
 
     self.statusBadge = [NSTextField labelWithString:@"🟢 พร้อมทำงาน (Granted)"];
-    self.statusBadge.frame = NSMakeRect(28, y, 280, 22);
+    self.statusBadge.frame = NSMakeRect(28, y, 250, 22);
     self.statusBadge.font = [NSFont systemFontOfSize:13];
     self.statusBadge.textColor = [NSColor systemGreenColor];
     [contentView addSubview:self.statusBadge];
 
-    self.grantAccessButton = [NSButton buttonWithTitle:@"เปิดการตั้งค่า System Settings"
+    self.grantAccessButton = [NSButton buttonWithTitle:@"เปิดการตั้งค่า Settings"
                                                 target:self
                                                 action:@selector(onOpenAccessibility:)];
-    self.grantAccessButton.frame = NSMakeRect(320, y - 2, 212, 26);
+    self.grantAccessButton.frame = NSMakeRect(285, y - 2, 140, 26);
     self.grantAccessButton.bezelStyle = NSBezelStyleRounded;
     [contentView addSubview:self.grantAccessButton];
+
+    self.resetAccessButton = [NSButton buttonWithTitle:@"🔄 รีเซ็ตสิทธิ์"
+                                                target:self
+                                                action:@selector(onResetAccessibility:)];
+    self.resetAccessButton.frame = NSMakeRect(430, y - 2, 102, 26);
+    self.resetAccessButton.bezelStyle = NSBezelStyleRounded;
+    self.resetAccessButton.toolTip = @"รีเซ็ตสิทธิ์ในระบบ macOS TCC กรณีสิทธิ์ค้างหรือไม่ถูกตรวจจับ";
+    [contentView addSubview:self.resetAccessButton];
 
     // 3. Live Playground Box
     y -= 135;
@@ -194,6 +203,12 @@ static PhasaWindowController *g_controller = nil;
     }
 }
 
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
+    [self.window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    return YES;
+}
+
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self.pollTimer invalidate];
@@ -211,6 +226,16 @@ static PhasaWindowController *g_controller = nil;
     } else {
         [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
     }
+    if (g_poll_timer_cb) {
+        g_poll_timer_cb();
+    }
+}
+
+- (void)onResetAccessibility:(id)sender {
+    system("tccutil reset Accessibility com.phasa.app");
+    NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+    AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
     if (g_poll_timer_cb) {
         g_poll_timer_cb();
     }
@@ -277,6 +302,7 @@ void phasa_ui_init(int initial_mode, bool is_autostart, bool is_notify) {
     if (!g_controller) {
         [NSApplication sharedApplication];
         g_controller = [[PhasaWindowController alloc] init];
+        [NSApp setDelegate:g_controller];
         [g_controller setupUIWithMode:initial_mode autostart:is_autostart notify:is_notify];
     }
 }
@@ -328,10 +354,12 @@ void phasa_ui_set_accessibility_status(bool granted) {
             g_controller.statusBadge.stringValue = @"🟢 สิทธิ์พร้อมทำงาน (Granted & Active)";
             g_controller.statusBadge.textColor = [NSColor systemGreenColor];
             g_controller.grantAccessButton.hidden = YES;
+            g_controller.resetAccessButton.hidden = YES;
         } else {
             g_controller.statusBadge.stringValue = @"🔴 ยังไม่ได้รับสิทธิ์ (Waiting for Permission)";
             g_controller.statusBadge.textColor = [NSColor systemRedColor];
             g_controller.grantAccessButton.hidden = NO;
+            g_controller.resetAccessButton.hidden = NO;
         }
     }
 }

@@ -85,7 +85,10 @@ ls -la "${RESOURCES_DIR}"
 
 if [[ "${1:-}" == "--install" ]]; then
     echo "=== Installing to /Applications/Phasa.app ==="
+    killall phasa 2>/dev/null || true
     rm -rf "/Applications/Phasa.app"
     cp -R "${APP_DIR}" "/Applications/Phasa.app"
     echo "Successfully installed /Applications/Phasa.app!"
+    echo "=== Launching /Applications/Phasa.app ==="
+    open "/Applications/Phasa.app"
 fi
