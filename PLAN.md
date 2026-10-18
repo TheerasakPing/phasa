@@ -169,13 +169,14 @@
   }
   ```
 
-- [ ] **Step 1: Implement FFI bindings for `CGEventTapCreate`, `CFMachPort`, `CFRunLoop`**
-- [ ] **Step 2: Implement timeout recovery handler**
-  - Intercept `kCGEventTapDisabledByTimeout` and re-enable tap automatically.\n- [ ] **Step 3: Implement event tagging**
+- [x] **Step 1: Implement FFI bindings for `CGEventTapCreate`, `CFMachPort`, `CFRunLoop`**
+- [x] **Step 2: Implement timeout recovery handler**
+  - Intercept `kCGEventTapDisabledByTimeout` and re-enable tap automatically.
+- [x] **Step 3: Implement event tagging**
   - Set and check `kCGEventSourceUserData` with unique magic signature to prevent self-hook recursion.
-- [ ] **Step 4: Verify compiling & link test**
+- [x] **Step 4: Verify compiling & link test**
   `cargo check -p rightlang-macos`
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   `git commit -m "feat(macos): implement robust CGEventTap keyboard listener"`
 
 ---
