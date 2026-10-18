@@ -239,6 +239,30 @@ impl EventTapListener {
         self.run()
     }
 
+    /// Attaches the event tap to an existing CFRunLoop without blocking.
+    pub fn start_with_run_loop(&self, run_loop: ffi::CFRunLoopRef) -> Result<ffi::CFRunLoopSourceRef, HookError> {
+        let port = self.mach_port.load(Ordering::SeqCst);
+        if port.is_null() {
+            return Err(HookError::InvalidPort);
+        }
+
+        self.run_loop.store(run_loop as _, Ordering::SeqCst);
+        self.is_running.store(true, Ordering::SeqCst);
+
+        unsafe {
+            let source = ffi::CFMachPortCreateRunLoopSource(std::ptr::null_mut(), port as _, 0);
+            if source.is_null() {
+                return Err(HookError::RunLoopError(
+                    "Failed to create CFRunLoopSource from mach port".into(),
+                ));
+            }
+
+            ffi::CFRunLoopAddSource(run_loop, source, ffi::kCFRunLoopCommonModes);
+            ffi::CGEventTapEnable(port as _, true);
+            Ok(source)
+        }
+    }
+
     /// Stops the runloop and disables the tap.
     pub fn stop(&self) {
         let port = self.mach_port.load(Ordering::SeqCst);

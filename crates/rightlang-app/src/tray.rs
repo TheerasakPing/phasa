@@ -14,6 +14,8 @@ pub enum TrayAction {
     ToggleStartAtLogin,
     /// Open the Phasa configuration folder in Finder / file manager.
     OpenConfigDir,
+    /// Open macOS Accessibility Privacy & Security settings.
+    OpenAccessibility,
     /// Terminate the daemon gracefully.
     Quit,
 }
@@ -23,6 +25,7 @@ pub struct TrayManager {
     #[allow(dead_code)]
     tray_icon: Option<TrayIcon>,
     mode_item: Option<MenuItem>,
+    perm_item: Option<MenuItem>,
     start_login_item: Option<CheckMenuItem>,
     current_mode: CorrectionMode,
 }
@@ -37,6 +40,7 @@ impl TrayManager {
             return Ok(Self {
                 tray_icon: None,
                 mode_item: None,
+                perm_item: None,
                 start_login_item: None,
                 current_mode: initial_mode,
             });
@@ -45,6 +49,12 @@ impl TrayManager {
         let menu = Menu::new();
 
         let header_item = MenuItem::with_id("app_header", "Phasa (ภาษา) v0.1.0", false, None);
+        let item_perm = MenuItem::with_id(
+            "open_accessibility",
+            "⚠️ Grant Accessibility Permission (ให้สิทธิ์การเข้าถึง)",
+            true,
+            None,
+        );
         let initial_text = format!("Mode: {}", Self::mode_display_name(initial_mode));
         let mode_item = MenuItem::with_id("mode_info", initial_text, false, None);
 
@@ -70,6 +80,7 @@ impl TrayManager {
 
         menu.append_items(&[
             &header_item,
+            &item_perm,
             &mode_item,
             &sep1,
             &item_auto,
@@ -109,6 +120,7 @@ impl TrayManager {
         Ok(Self {
             tray_icon,
             mode_item: Some(mode_item),
+            perm_item: Some(item_perm),
             start_login_item: Some(item_start_login),
             current_mode: initial_mode,
         })
@@ -166,9 +178,15 @@ impl TrayManager {
         unsafe {
             type MsgSendNoArgs = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
             type MsgSendIsize = unsafe extern "C" fn(*mut c_void, *mut c_void, isize) -> bool;
+            type MsgSendStr = unsafe extern "C" fn(*mut c_void, *mut c_void, *const c_char) -> *mut c_void;
+            type MsgSendVoidWithArg = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void);
+            type MsgSendVoid = unsafe extern "C" fn(*mut c_void, *mut c_void);
 
             let msg_send: MsgSendNoArgs = std::mem::transmute(objc_msgSend as *const ());
             let msg_send_isize: MsgSendIsize = std::mem::transmute(objc_msgSend as *const ());
+            let msg_send_str: MsgSendStr = std::mem::transmute(objc_msgSend as *const ());
+            let msg_send_arg: MsgSendVoidWithArg = std::mem::transmute(objc_msgSend as *const ());
+            let msg_send_void: MsgSendVoid = std::mem::transmute(objc_msgSend as *const ());
 
             let cls_nsapp = objc_getClass(c"NSApplication".as_ptr());
             if !cls_nsapp.is_null() {
@@ -178,6 +196,24 @@ impl TrayManager {
                     let sel_policy = sel_registerName(c"setActivationPolicy:".as_ptr());
                     // NSApplicationActivationPolicyAccessory = 1
                     let _ = msg_send_isize(app, sel_policy, 1);
+                }
+            }
+
+            // Disable macOS Automatic Termination & Sudden Termination for this persistent background daemon
+            let cls_process_info = objc_getClass(c"NSProcessInfo".as_ptr());
+            if !cls_process_info.is_null() {
+                let sel_process_info = sel_registerName(c"processInfo".as_ptr());
+                let p_info = msg_send(cls_process_info, sel_process_info);
+                if !p_info.is_null() {
+                    let cls_nsstring = objc_getClass(c"NSString".as_ptr());
+                    let sel_str = sel_registerName(c"stringWithUTF8String:".as_ptr());
+                    let reason = msg_send_str(cls_nsstring, sel_str, c"Phasa persistent input daemon".as_ptr());
+
+                    let sel_disable_auto = sel_registerName(c"disableAutomaticTermination:".as_ptr());
+                    msg_send_arg(p_info, sel_disable_auto, reason);
+
+                    let sel_disable_sudden = sel_registerName(c"disableSuddenTermination".as_ptr());
+                    msg_send_void(p_info, sel_disable_sudden);
                 }
             }
         }
@@ -235,9 +271,42 @@ impl TrayManager {
             "set_disabled" => Some(TrayAction::SetMode(CorrectionMode::Disabled)),
             "toggle_start_login" => Some(TrayAction::ToggleStartAtLogin),
             "open_config" => Some(TrayAction::OpenConfigDir),
+            "open_accessibility" => Some(TrayAction::OpenAccessibility),
             "quit" => Some(TrayAction::Quit),
             _ => None,
         }
+    }
+
+    /// Updates the accessibility permission notice in the tray menu.
+    pub fn set_accessibility_status(&mut self, granted: bool) {
+        if let Some(ref item) = self.perm_item {
+            if granted {
+                item.set_text("✅ Accessibility Permission Granted");
+                item.set_enabled(false);
+            } else {
+                item.set_text("⚠️ Grant Accessibility Permission (คลิกเพื่อให้สิทธิ์)");
+                item.set_enabled(true);
+            }
+        }
+        if !granted {
+            if let Some(ref item) = self.mode_item {
+                item.set_text("Status: ⚠️ Waiting for Accessibility Permission");
+            }
+            if let Some(tray) = &mut self.tray_icon {
+                let _ = tray.set_tooltip(Some("Phasa (ภาษา) - Waiting for Accessibility Permission".to_string()));
+            }
+        }
+    }
+
+    /// Opens macOS Accessibility System Settings.
+    pub fn open_accessibility_settings() -> std::io::Result<()> {
+        #[cfg(all(target_os = "macos", not(test)))]
+        {
+            std::process::Command::new("open")
+                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+                .spawn()?;
+        }
+        Ok(())
     }
 
     /// Opens the configuration directory in Finder.

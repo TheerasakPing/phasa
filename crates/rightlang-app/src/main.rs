@@ -1,14 +1,15 @@
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use core_foundation_sys::base::{kCFAllocatorDefault, CFRelease};
 use core_foundation_sys::date::CFAbsoluteTimeGetCurrent;
 use core_foundation_sys::runloop::{
-    kCFRunLoopCommonModes, CFRunLoopAddTimer, CFRunLoopGetCurrent, CFRunLoopRemoveTimer,
-    CFRunLoopTimerContext, CFRunLoopTimerCreate, CFRunLoopTimerInvalidate, CFRunLoopTimerRef,
+    kCFRunLoopCommonModes, CFRunLoopAddTimer, CFRunLoopGetCurrent, CFRunLoopRemoveSource,
+    CFRunLoopRemoveTimer, CFRunLoopRun, CFRunLoopStop, CFRunLoopTimerContext,
+    CFRunLoopTimerCreate, CFRunLoopTimerInvalidate, CFRunLoopTimerRef,
 };
 use crossbeam_channel::unbounded;
 use rightlang_app::config::{AppConfig, CorrectionMode};
@@ -16,6 +17,7 @@ use rightlang_app::notify::NotificationManager;
 use rightlang_app::tray::{TrayAction, TrayManager};
 use rightlang_app::worker::{load_dictionaries, KeyWorker};
 use rightlang_core::layout::{KeyTranslator, KeyboardLayout};
+use rightlang_macos::event::KeyEvent;
 use rightlang_macos::hook::{is_accessibility_trusted, EventTapListener};
 use rightlang_macos::tis::InputSourceManager;
 
@@ -28,8 +30,13 @@ struct TrayTimerState {
     tray_manager: TrayManager,
     cmd_tx: crossbeam_channel::Sender<WorkerCommand>,
     running: Arc<AtomicBool>,
-    listener_weak: std::sync::Weak<EventTapListener>,
+    event_tx: crossbeam_channel::Sender<KeyEvent>,
+    listener: Arc<Mutex<Option<Arc<EventTapListener>>>>,
+    source_ptr: Arc<Mutex<Option<*mut c_void>>>,
 }
+
+unsafe impl Send for TrayTimerState {}
+unsafe impl Sync for TrayTimerState {}
 
 extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) {
     if info.is_null() {
@@ -38,6 +45,9 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
     let state = unsafe { &mut *(info as *mut TrayTimerState) };
     while let Some(action) = state.tray_manager.check_action() {
         match action {
+            TrayAction::OpenAccessibility => {
+                let _ = TrayManager::open_accessibility_settings();
+            }
             TrayAction::SetMode(mode) => {
                 state.tray_manager.set_mode(mode);
                 let _ = state.cmd_tx.send(WorkerCommand::SetMode(mode));
@@ -63,10 +73,40 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
             TrayAction::Quit => {
                 println!("\nShutdown requested from menubar tray. Stopping Phasa daemon...");
                 state.running.store(false, Ordering::SeqCst);
-                if let Some(l) = state.listener_weak.upgrade() {
-                    l.stop();
+                if let Ok(lock) = state.listener.lock() {
+                    if let Some(l) = lock.as_ref() {
+                        l.stop();
+                    }
+                }
+                unsafe {
+                    CFRunLoopStop(CFRunLoopGetCurrent());
                 }
             }
+        }
+    }
+
+    // Check accessibility status if listener is not yet attached
+    let needs_attach = state.listener.lock().map(|l| l.is_none()).unwrap_or(false);
+    if needs_attach {
+        let trusted = is_accessibility_trusted(false);
+        if trusted {
+            if let Ok(l) = EventTapListener::new(state.event_tx.clone()) {
+                let run_loop = unsafe { CFRunLoopGetCurrent() };
+                if let Ok(source) = l.start_with_run_loop(run_loop as _) {
+                    let arc_l = Arc::new(l);
+                    if let Ok(mut lock) = state.listener.lock() {
+                        *lock = Some(arc_l);
+                    }
+                    if let Ok(mut src_lock) = state.source_ptr.lock() {
+                        *src_lock = Some(source as _);
+                    }
+                    state.tray_manager.set_accessibility_status(true);
+                    state.tray_manager.set_mode(state.tray_manager.current_mode());
+                    println!("[Phasa] Accessibility granted! Event tap attached and active.");
+                }
+            }
+        } else {
+            state.tray_manager.set_accessibility_status(false);
         }
     }
 }
@@ -299,7 +339,8 @@ fn main() {
     TrayManager::setup_dock_policy();
 
     // Check accessibility permissions
-    if !is_accessibility_trusted(true) {
+    let initial_trusted = is_accessibility_trusted(true);
+    if !initial_trusted {
         eprintln!(
             "Warning: Phasa requires Accessibility permissions to intercept keystrokes.\n\
              Please grant permissions in System Settings -> Privacy & Security -> Accessibility."
@@ -370,32 +411,10 @@ fn main() {
         }
     });
 
-    // Create EventTapListener
-    let listener = match EventTapListener::new(tx) {
-        Ok(l) => Arc::new(l),
-        Err(err) => {
-            eprintln!("Failed to initialize macOS EventTapListener: {}", err);
-            running.store(false, Ordering::SeqCst);
-            let _ = worker_handle.join();
-            std::process::exit(1);
-        }
-    };
+    let run_loop = unsafe { CFRunLoopGetCurrent() };
 
-    // Set up Ctrl+C signal handler for graceful shutdown
-    let listener_weak = Arc::downgrade(&listener);
-    let running_signal = Arc::clone(&running);
-    if let Err(err) = ctrlc::set_handler(move || {
-        println!("\nShutdown signal received. Stopping Phasa daemon...");
-        running_signal.store(false, Ordering::SeqCst);
-        if let Some(l) = listener_weak.upgrade() {
-            l.stop();
-        }
-    }) {
-        eprintln!("Warning: Failed to set Ctrl-C handler: {}", err);
-    }
-
-    // Initialize Status Bar Menubar Tray
-    let tray_manager = match TrayManager::new(config.mode) {
+    // Initialize Status Bar Menubar Tray FIRST so icon is always visible
+    let mut tray_manager = match TrayManager::new(config.mode) {
         Ok(tm) => Some(tm),
         Err(err) => {
             eprintln!("Warning: Menubar tray initialization failed: {}", err);
@@ -403,7 +422,52 @@ fn main() {
         }
     };
 
-    // Set up CFRunLoopTimer on the main thread to poll tray actions
+    if let Some(ref mut tm) = tray_manager {
+        tm.set_accessibility_status(initial_trusted);
+    }
+
+    // Try to attach EventTapListener if already trusted
+    let mut initial_listener: Option<Arc<EventTapListener>> = None;
+    let mut initial_source: Option<*mut c_void> = None;
+
+    if initial_trusted {
+        match EventTapListener::new(tx.clone()) {
+            Ok(l) => match l.start_with_run_loop(run_loop as _) {
+                Ok(source) => {
+                    initial_listener = Some(Arc::new(l));
+                    initial_source = Some(source as _);
+                    println!("[Phasa] Keyboard event tap successfully hooked on main run loop.");
+                }
+                Err(err) => eprintln!("Warning: Failed to attach event tap: {}", err),
+            },
+            Err(err) => eprintln!("Warning: Failed to create EventTapListener: {}", err),
+        }
+    } else {
+        println!("[Phasa] Waiting for Accessibility permission. Tray is active and waiting...");
+    }
+
+    let listener_arc = Arc::new(Mutex::new(initial_listener));
+    let source_ptr_arc = Arc::new(Mutex::new(initial_source));
+
+    // Set up Ctrl+C signal handler for graceful shutdown
+    let listener_signal = Arc::clone(&listener_arc);
+    let running_signal = Arc::clone(&running);
+    if let Err(err) = ctrlc::set_handler(move || {
+        println!("\nShutdown signal received. Stopping Phasa daemon...");
+        running_signal.store(false, Ordering::SeqCst);
+        if let Ok(lock) = listener_signal.lock() {
+            if let Some(l) = lock.as_ref() {
+                l.stop();
+            }
+        }
+        unsafe {
+            CFRunLoopStop(CFRunLoopGetCurrent());
+        }
+    }) {
+        eprintln!("Warning: Failed to set Ctrl-C handler: {}", err);
+    }
+
+    // Set up CFRunLoopTimer on the main thread to poll tray actions and permissions
     let mut timer_ref: Option<CFRunLoopTimerRef> = None;
     let mut timer_state_box: Option<Box<TrayTimerState>> = None;
 
@@ -412,7 +476,9 @@ fn main() {
             tray_manager: tm,
             cmd_tx,
             running: Arc::clone(&running),
-            listener_weak: Arc::downgrade(&listener),
+            event_tx: tx,
+            listener: Arc::clone(&listener_arc),
+            source_ptr: Arc::clone(&source_ptr_arc),
         });
 
         let state_ptr = state.as_mut() as *mut TrayTimerState as *mut c_void;
@@ -427,11 +493,10 @@ fn main() {
         };
 
         unsafe {
-            let run_loop = CFRunLoopGetCurrent();
             let timer = CFRunLoopTimerCreate(
                 kCFAllocatorDefault,
                 CFAbsoluteTimeGetCurrent() + 0.1,
-                0.1,
+                0.2,
                 0,
                 0,
                 tray_timer_callback,
@@ -447,26 +512,39 @@ fn main() {
 
     println!("Phasa (ภาษา) daemon running. Press Ctrl+C or use the Menubar tray to stop.");
 
-    // Run the event tap loop (blocking on CFRunLoop)
-    if let Err(err) = listener.run() {
-        eprintln!("EventTap run loop error: {}", err);
+    // Run the main event run loop
+    unsafe {
+        CFRunLoopRun();
     }
 
     // Cleanup tray timer
     if let Some(timer) = timer_ref {
         unsafe {
-            let run_loop = CFRunLoopGetCurrent();
             CFRunLoopTimerInvalidate(timer);
             CFRunLoopRemoveTimer(run_loop, timer, kCFRunLoopCommonModes);
             CFRelease(timer as _);
         }
     }
+
+    // Cleanup event tap run loop source
+    if let Ok(lock) = source_ptr_arc.lock() {
+        if let Some(source) = *lock {
+            unsafe {
+                CFRunLoopRemoveSource(run_loop, source as _, kCFRunLoopCommonModes);
+                CFRelease(source);
+            }
+        }
+    }
+
     drop(timer_state_box);
 
     // Cleanup and shutdown
     running.store(false, Ordering::SeqCst);
-    listener.stop();
-    drop(listener);
+    if let Ok(lock) = listener_arc.lock() {
+        if let Some(l) = lock.as_ref() {
+            l.stop();
+        }
+    }
 
     let _ = worker_handle.join();
     println!("Phasa daemon stopped cleanly.");

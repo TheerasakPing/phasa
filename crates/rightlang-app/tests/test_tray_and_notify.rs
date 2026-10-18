@@ -76,6 +76,10 @@ fn test_tray_action_from_id_mapping() {
         Some(TrayAction::OpenConfigDir)
     );
     assert_eq!(
+        TrayManager::action_from_id("open_accessibility"),
+        Some(TrayAction::OpenAccessibility)
+    );
+    assert_eq!(
         TrayManager::action_from_id("quit"),
         Some(TrayAction::Quit)
     );

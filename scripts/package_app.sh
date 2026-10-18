@@ -56,6 +56,10 @@ cat > "${CONTENTS_DIR}/Info.plist" << 'EOF'
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Phasa Contributors.</string>
 </dict>
