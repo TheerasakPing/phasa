@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Script to build and package Phasa (ภาษา) into a standalone macOS Application Bundle (.app)
-# Output: dist/Phasa.app ready for /Applications deployment
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
-echo "=== Building Phasa Release Binary ==="
-cd "${ROOT_DIR}"
-cargo build --release
-
 DIST_DIR="${ROOT_DIR}/dist"
-APP_DIR="${DIST_DIR}/Phasa.app"
+APP_NAME="Phasa.app"
+APP_DIR="${DIST_DIR}/${APP_NAME}"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
+
+echo "=== Building Phasa Release Binary ==="
+cd "${ROOT_DIR}"
+cargo build --release --bin phasa
 
 echo "=== Creating Application Bundle Structure ==="
 rm -rf "${APP_DIR}"
@@ -27,41 +24,37 @@ cp "${ROOT_DIR}/target/release/phasa" "${MACOS_DIR}/phasa"
 chmod +x "${MACOS_DIR}/phasa"
 
 echo "=== Creating Info.plist ==="
-cat > "${CONTENTS_DIR}/Info.plist" << 'EOF'
+cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>phasa</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.phasa.app</string>
     <key>CFBundleName</key>
     <string>Phasa</string>
     <key>CFBundleDisplayName</key>
     <string>Phasa (ภาษา)</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.phasa.app</string>
-    <key>CFBundleVersion</key>
-    <string>0.1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
-    <key>CFBundleExecutable</key>
-    <string>phasa</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
     <key>CFBundleIconFile</key>
-    <string>phasa</string>
+    <string>phasa.icns</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
-    <key>NSSupportsAutomaticTermination</key>
-    <false/>
-    <key>NSSupportsSuddenTermination</key>
-    <false/>
     <key>NSHumanReadableCopyright</key>
-    <string>Copyright © 2026 Phasa Contributors.</string>
+    <string>Copyright © 2026 Phasa Open Source Project. All rights reserved.</string>
 </dict>
 </plist>
 EOF
@@ -81,8 +74,8 @@ if [ -d "${ASSETS_DIR}" ]; then
     cp -v "${ASSETS_DIR}"/* "${RESOURCES_DIR}/"
 fi
 
-echo "=== Signing Application Bundle with Ad-Hoc Identity ==="
-codesign --force --deep --sign - "${APP_DIR}"
+echo "=== Signing Application Bundle with Stable Designated Requirement ==="
+codesign --force --deep --sign - --requirements '=designated => identifier "com.phasa.app"' "${APP_DIR}"
 
 echo "=== Packaging Complete ==="
 echo "Application bundle created at:"
