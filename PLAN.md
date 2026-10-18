@@ -51,7 +51,8 @@
   ```rust
   pub enum KeyboardLayout { Kedmanee, Pattachote, Qwerty, Dvorak }
   pub struct KeyTranslator { ... }
-  impl KeyTranslator {\n      pub fn new(source: KeyboardLayout, target: KeyboardLayout) -> Self;
+  impl KeyTranslator {
+      pub fn new(source: KeyboardLayout, target: KeyboardLayout) -> Self;
       pub fn convert_char(&self, ch: char) -> char;
       pub fn convert_str(&self, input: &str) -> String;
   }
@@ -150,7 +151,8 @@
 
 ---
 
-### Task 4: macOS Event Tap Hook & Event Filtering (`rightlang-macos`)\n
+### Task 4: macOS Event Tap Hook & Event Filtering (`rightlang-macos`)
+
 **Files:**
 - Create: `crates/rightlang-macos/Cargo.toml`
 - Create: `crates/rightlang-macos/src/lib.rs`
@@ -227,10 +229,10 @@
   }
   ```
 
-- [ ] **Step 1: Write test for TOML configuration parsing and application rules**
-- [ ] **Step 2: Implement configuration loader with fallback defaults**
-- [ ] **Step 3: Implement bundle ID resolution via `NSWorkspace` / `runningApplications`**
-- [ ] **Step 4: Commit**
+- [x] **Step 1: Write test for TOML configuration parsing and application rules**
+- [x] **Step 2: Implement configuration loader with fallback defaults**
+- [x] **Step 3: Implement bundle ID resolution via `NSWorkspace` / `runningApplications`**
+- [x] **Step 4: Commit**
   `git commit -m "feat(app): implement configuration and application rule manager"`
 
 ---
