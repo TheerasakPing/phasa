@@ -1,4 +1,7 @@
-use rightlang_core::{layout::{KEDMANEE, QWERTY}, KeyboardLayout, KeyTranslator};
+use rightlang_core::{
+    layout::{KEDMANEE, QWERTY},
+    KeyTranslator, KeyboardLayout,
+};
 
 #[test]
 fn test_qwerty_to_kedmanee_basic() {

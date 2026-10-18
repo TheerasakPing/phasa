@@ -97,22 +97,22 @@
   }
   ```
 
-- [ ] **Step 1: Write unit tests for Trie dictionary lookups and language detection**
+- [x] **Step 1: Write unit tests for Trie dictionary lookups and language detection**
   - Test known Thai words (`สวัสดี`, `เป็น`, `ครับ`).
   - Test known English words (`hello`, `test`, `vscode`).
   - Test partial prefix detection.
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
   `cargo test -p rightlang-core --test test_dictionary`
 
-- [ ] **Step 3: Implement compact Trie data structure**
+- [x] **Step 3: Implement compact Trie data structure**
   - Implement Double-Array Trie or memory-efficient Node-based Trie in Rust.
   - Load Thai and English dictionaries into separate instances.
 
-- [ ] **Step 4: Run tests and benchmarks**
+- [x] **Step 4: Run tests and benchmarks**
   `cargo test -p rightlang-core --test test_dictionary`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   `git commit -m "feat(core): implement compact dictionary trie and language detection"`
 
 ---
@@ -172,8 +172,7 @@
 
 - [ ] **Step 1: Implement FFI bindings for `CGEventTapCreate`, `CFMachPort`, `CFRunLoop`**
 - [ ] **Step 2: Implement timeout recovery handler**
-  - Intercept `kCGEventTapDisabledByTimeout` and re-enable tap automatically.
-- [ ] **Step 3: Implement event tagging**
+  - Intercept `kCGEventTapDisabledByTimeout` and re-enable tap automatically.\n- [ ] **Step 3: Implement event tagging**
   - Set and check `kCGEventSourceUserData` with unique magic signature to prevent self-hook recursion.
 - [ ] **Step 4: Verify compiling & link test**
   `cargo check -p rightlang-macos`

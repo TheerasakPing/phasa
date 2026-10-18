@@ -1,3 +1,7 @@
+pub mod dictionary;
 pub mod layout;
+pub mod trie;
 
-pub use layout::{KeyboardLayout, KeyTranslator};
+pub use dictionary::{DictionaryFilter, Language};
+pub use layout::{KeyTranslator, KeyboardLayout};
+pub use trie::CompactTrie;
