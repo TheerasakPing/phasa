@@ -265,8 +265,8 @@
 - Native tray icon showing current mode (Auto / Manual / Disabled).
 - System notification banner on auto-correction with Undo action.
 
-- [ ] **Step 1: Implement minimal tray menu (`muda` / native AppKit)**
-- [ ] **Step 2: Implement notification delivery via macOS `NSUserNotification` or `mac-notification-sys`**
-- [ ] **Step 3: Build release binary and verify memory footprint**
-- [ ] **Step 4: Commit**
+- [x] **Step 1: Implement minimal tray menu (`muda` / native AppKit)**
+- [x] **Step 2: Implement notification delivery via macOS `NSUserNotification` or `mac-notification-sys`**
+- [x] **Step 3: Build release binary and verify memory footprint**
+- [x] **Step 4: Commit**
   `git commit -m "feat(app): add menubar tray and native notifications"`

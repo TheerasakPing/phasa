@@ -74,16 +74,38 @@ impl KeyWorker {
             return None;
         }
 
+        // Check for Undo shortcuts: Cmd+Shift+Z or Ctrl+Option+Z
+        // macOS kCGEventFlagMaskShift = 0x00020000, Control = 0x00040000,
+        // Alternate (Option) = 0x00080000, Command = 0x00100000
+        const SHIFT_FLAG: u64 = 0x00020000;
+        const CTRL_FLAG: u64 = 0x00040000;
+        const ALT_FLAG: u64 = 0x00080000;
+        const CMD_FLAG: u64 = 0x00100000;
+
+        let is_z = event.key_code == 0x06
+            || event
+                .characters
+                .as_deref()
+                .map(|s| s.eq_ignore_ascii_case("z") || s == "\u{1a}")
+                .unwrap_or(false);
+
+        let is_cmd_shift_z =
+            is_z && ((event.flags & CMD_FLAG) != 0) && ((event.flags & SHIFT_FLAG) != 0);
+        let is_ctrl_opt_z =
+            is_z && ((event.flags & CTRL_FLAG) != 0) && ((event.flags & ALT_FLAG) != 0);
+
+        if is_cmd_shift_z || is_ctrl_opt_z {
+            self.undo();
+            return None;
+        }
+
         // Backspace key (macOS key code 0x33 = 51)
         if event.key_code == 0x33 {
             self.buffer.pop();
             return None;
         }
 
-        // Command or Control modifier keys active (e.g. shortcuts like Cmd+C, Cmd+V, Ctrl+C)
-        // macOS kCGEventFlagMaskCommand = 0x00100000, kCGEventFlagMaskControl = 0x00040000
-        const CMD_FLAG: u64 = 0x00100000;
-        const CTRL_FLAG: u64 = 0x00040000;
+        // General Command or Control modifier keys active (e.g. shortcuts like Cmd+C, Cmd+V, Ctrl+C)
         if (event.flags & (CMD_FLAG | CTRL_FLAG)) != 0 {
             self.clear_buffer();
             return None;
@@ -114,7 +136,7 @@ impl KeyWorker {
             let current_app_id = self.resolve_active_app();
             let mode = self.rule_manager.mode_for_app(&current_app_id);
             if mode == CorrectionMode::Auto {
-                let result = self.evaluate_and_correct();
+                let result = self.evaluate_and_correct_internal(true);
                 if result.is_some() {
                     return result;
                 }
@@ -143,7 +165,17 @@ impl KeyWorker {
     }
 
     /// Check buffer and trigger correction if mismatched language is detected.
+    /// Does not include trailing space offset (suitable for manual hotkey invocation).
     pub fn evaluate_and_correct(&mut self) -> Option<CorrectionRecord> {
+        self.evaluate_and_correct_internal(false)
+    }
+
+    /// Check buffer and trigger correction with optional space delimiter offset.
+    pub fn evaluate_and_correct_with_space(&mut self, is_space: bool) -> Option<CorrectionRecord> {
+        self.evaluate_and_correct_internal(is_space)
+    }
+
+    fn evaluate_and_correct_internal(&mut self, is_space: bool) -> Option<CorrectionRecord> {
         let current_app_id = self.resolve_active_app();
         let mode = self.rule_manager.mode_for_app(&current_app_id);
 
@@ -161,8 +193,15 @@ impl KeyWorker {
             .detect_mismatched_language(&self.buffer, &self.translator);
 
         if let Some(target_lang) = detected {
-            let replacement = self.translator.convert_str(&self.buffer);
-            let backspace_count = self.buffer.encode_utf16().count();
+            let mut replacement = self.translator.convert_str(&self.buffer);
+            let mut backspace_count = self.buffer.encode_utf16().count();
+
+            // When triggered by space delimiter, macOS already passed the trailing space through,
+            // so we backspace the word + 1 space, and append a space to the replacement.
+            if is_space {
+                backspace_count += 1;
+                replacement.push(' ');
+            }
 
             // Dispatch synthetic backspaces and replacement text
             let _ = self.dispatcher.replace_text(

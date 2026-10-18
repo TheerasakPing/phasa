@@ -49,13 +49,13 @@ fn test_worker_correction_khrap() {
     assert!(worker.handle_event(&create_mock_key_event("[")).is_none());
     assert_eq!(worker.buffer(), "8iy[");
 
-    // Followed by space -> triggers correction to "ครับ" in Thai!
+    // Followed by space -> triggers correction to "ครับ " in Thai with trailing space!
     let record = worker
         .handle_event(&create_mock_key_event(" "))
         .expect("Space must trigger correction for '8iy['");
 
     assert_eq!(record.original, "8iy[");
-    assert_eq!(record.replacement, "ครับ");
+    assert_eq!(record.replacement, "ครับ ");
     assert_eq!(record.target_language, Language::Thai);
     assert_eq!(worker.buffer(), "");
 }
@@ -71,13 +71,13 @@ fn test_worker_correction_pen() {
     assert!(worker.handle_event(&create_mock_key_event("o")).is_none());
     assert_eq!(worker.buffer(), "gxHo");
 
-    // Followed by space -> triggers correction to "เป็น" in Thai!
+    // Followed by space -> triggers correction to "เป็น " in Thai with trailing space!
     let record = worker
         .handle_event(&create_mock_key_event(" "))
         .expect("Space must trigger correction for 'gxHo'");
 
     assert_eq!(record.original, "gxHo");
-    assert_eq!(record.replacement, "เป็น");
+    assert_eq!(record.replacement, "เป็น ");
     assert_eq!(record.target_language, Language::Thai);
     assert_eq!(worker.buffer(), "");
 }
@@ -138,7 +138,7 @@ fn test_worker_undo_restores_previous_buffer() {
     let record = worker
         .handle_event(&create_mock_key_event(" "))
         .expect("Correction expected");
-    assert_eq!(record.replacement, "ครับ");
+    assert_eq!(record.replacement, "ครับ ");
     assert_eq!(worker.buffer(), "");
 
     // Test Undo: restores previous buffer
@@ -148,6 +148,40 @@ fn test_worker_undo_restores_previous_buffer() {
 
     // Subsequent undo fails
     assert!(!worker.undo(), "Subsequent undo must return false");
+}
+
+#[test]
+fn test_worker_undo_shortcuts() {
+    let mut worker = create_test_worker();
+
+    // 1. Trigger correction
+    for ch in ["8", "i", "y", "[", " "] {
+        worker.handle_event(&create_mock_key_event(ch));
+    }
+    assert!(worker.last_correction().is_some());
+
+    // Cmd+Shift+Z shortcut (Cmd = 0x00100000, Shift = 0x00020000, keycode = 0x06)
+    const CMD_FLAG: u64 = 0x00100000;
+    const SHIFT_FLAG: u64 = 0x00020000;
+    let cmd_shift_z = KeyEvent::new(0x06, KeyEventType::KeyDown, CMD_FLAG | SHIFT_FLAG, Some("Z".into()), false);
+    assert!(worker.handle_event(&cmd_shift_z).is_none());
+    assert_eq!(worker.buffer(), "8iy[");
+    assert!(worker.last_correction().is_none());
+
+    // 2. Trigger correction again
+    worker.clear_buffer();
+    for ch in ["g", "x", "H", "o", " "] {
+        worker.handle_event(&create_mock_key_event(ch));
+    }
+    assert!(worker.last_correction().is_some());
+
+    // Ctrl+Option+Z shortcut (Ctrl = 0x00040000, Option = 0x00080000, keycode = 0x06)
+    const CTRL_FLAG: u64 = 0x00040000;
+    const ALT_FLAG: u64 = 0x00080000;
+    let ctrl_opt_z = KeyEvent::new(0x06, KeyEventType::KeyDown, CTRL_FLAG | ALT_FLAG, Some("z".into()), false);
+    assert!(worker.handle_event(&ctrl_opt_z).is_none());
+    assert_eq!(worker.buffer(), "gxHo");
+    assert!(worker.last_correction().is_none());
 }
 
 #[test]
@@ -167,7 +201,7 @@ fn test_worker_reverse_correction_thai_to_english() {
         .expect("Reverse correction should trigger for '้ำสสน'");
 
     assert_eq!(record.original, "้ำสสน");
-    assert_eq!(record.replacement, "hello");
+    assert_eq!(record.replacement, "hello ");
     assert_eq!(record.target_language, Language::English);
     assert_eq!(worker.buffer(), "");
 
@@ -242,7 +276,7 @@ fn test_worker_manual_mode() {
     let result = worker.handle_event(&create_mock_key_event(" "));
     assert!(result.is_none());
 
-    // Explicit manual evaluate_and_correct() still works
+    // Explicit manual evaluate_and_correct() still works and does NOT append space
     worker.handle_event(&create_mock_key_event("8"));
     worker.handle_event(&create_mock_key_event("i"));
     worker.handle_event(&create_mock_key_event("y"));
