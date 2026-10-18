@@ -34,6 +34,79 @@ pub enum TisError {
     PropertyNotFound(String),
 }
 
+struct Invocation<F, R> {
+    closure: Option<F>,
+    result: Option<R>,
+}
+
+unsafe extern "C" fn dispatch_sync_runner<F: FnOnce() -> R, R>(context: *mut libc::c_void) {
+    let inv = &mut *(context as *mut Invocation<F, R>);
+    if let Some(f) = inv.closure.take() {
+        inv.result = Some(f());
+    }
+}
+
+/// Checks whether an AppKit `NSApplication` event loop is actively running.
+pub(crate) fn is_appkit_running() -> bool {
+    unsafe {
+        let class_name = b"NSApplication\0".as_ptr() as *const libc::c_char;
+        let nsapp_class = ffi::objc_getClass(class_name);
+        if nsapp_class.is_null() {
+            return false;
+        }
+
+        let sel_shared =
+            ffi::sel_registerName(b"sharedApplication\0".as_ptr() as *const libc::c_char);
+        let shared_app: *mut libc::c_void = {
+            let msg_send: unsafe extern "C" fn(
+                *mut libc::c_void,
+                *mut libc::c_void,
+            ) -> *mut libc::c_void = std::mem::transmute(ffi::objc_msgSend as *const ());
+            msg_send(nsapp_class, sel_shared)
+        };
+        if shared_app.is_null() {
+            return false;
+        }
+
+        let sel_running = ffi::sel_registerName(b"isRunning\0".as_ptr() as *const libc::c_char);
+        let is_running: libc::c_uchar = {
+            let msg_send: unsafe extern "C" fn(
+                *mut libc::c_void,
+                *mut libc::c_void,
+            ) -> libc::c_uchar = std::mem::transmute(ffi::objc_msgSend as *const ());
+            msg_send(shared_app, sel_running)
+        };
+
+        is_running != 0
+    }
+}
+
+/// Runs closure on the main dispatch queue if an AppKit event loop is active,
+/// or executes immediately on the current thread if already on the main thread or
+/// in headless/test mode.
+pub(crate) fn run_on_main<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    unsafe {
+        if libc::pthread_main_np() != 0 || !is_appkit_running() {
+            return f();
+        }
+
+        let mut inv = Invocation {
+            closure: Some(f),
+            result: None,
+        };
+
+        let context = &mut inv as *mut Invocation<F, R> as *mut libc::c_void;
+        let queue_ptr = std::ptr::addr_of!(ffi::_dispatch_main_q);
+
+        ffi::dispatch_sync_f(queue_ptr, context, dispatch_sync_runner::<F, R>);
+
+        inv.result.expect("run_on_main: closure failed to return result")
+    }
+}
+
 /// Manager for macOS Text Input Sources (Carbon TIS API).
 #[derive(Debug, Default, Clone)]
 pub struct InputSourceManager;
@@ -46,8 +119,10 @@ impl InputSourceManager {
 
     /// Returns the input source ID of the currently active keyboard input source.
     pub fn get_current_source_id(&self) -> Result<String, TisError> {
-        let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        self.get_current_source_id_unlocked()
+        run_on_main(|| {
+            let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            self.get_current_source_id_unlocked()
+        })
     }
 
     fn get_current_source_id_unlocked(&self) -> Result<String, TisError> {
@@ -75,16 +150,20 @@ impl InputSourceManager {
 
     /// Lists all enabled keyboard input sources.
     pub fn list_keyboard_input_sources(&self) -> Result<Vec<InputSourceInfo>, TisError> {
-        let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        self.list_input_sources_unlocked(false)
+        run_on_main(|| {
+            let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            self.list_input_sources_unlocked(false)
+        })
     }
 
     /// Lists all installed keyboard input sources (including disabled).
     pub fn list_all_installed_keyboard_input_sources(
         &self,
     ) -> Result<Vec<InputSourceInfo>, TisError> {
-        let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        self.list_input_sources_unlocked(true)
+        run_on_main(|| {
+            let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            self.list_input_sources_unlocked(true)
+        })
     }
 
     fn list_input_sources_unlocked(
@@ -117,8 +196,11 @@ impl InputSourceManager {
 
     /// Selects an input source by its bundle ID (e.g. "com.apple.keylayout.Thai").
     pub fn select_input_source(&self, source_id: &str) -> Result<(), TisError> {
-        let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        self.select_input_source_unlocked(source_id)
+        let source_id = source_id.to_string();
+        run_on_main(move || {
+            let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            self.select_input_source_unlocked(&source_id)
+        })
     }
 
     fn select_input_source_unlocked(&self, source_id: &str) -> Result<(), TisError> {
@@ -195,51 +277,55 @@ impl InputSourceManager {
     /// Automatically finds and switches to an active Thai keyboard layout.
     /// Returns `Ok(true)` if Thai layout is now active, or `Ok(false)` if no Thai layout was found.
     pub fn switch_to_thai(&self) -> Result<bool, TisError> {
-        let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let sources = self.list_input_sources_unlocked(false)?;
-        let thai_source = sources.iter().find(|s| {
-            s.languages.iter().any(|l| l.starts_with("th"))
-                || s.id.to_lowercase().contains("thai")
-                || s.name.to_lowercase().contains("thai")
-        });
+        run_on_main(|| {
+            let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let sources = self.list_input_sources_unlocked(false)?;
+            let thai_source = sources.iter().find(|s| {
+                s.languages.iter().any(|l| l.starts_with("th"))
+                    || s.id.to_lowercase().contains("thai")
+                    || s.name.to_lowercase().contains("thai")
+            });
 
-        if let Some(target) = thai_source {
-            let current_id = self.get_current_source_id_unlocked().ok();
-            if current_id.as_deref() == Some(&target.id) {
-                return Ok(true);
+            if let Some(target) = thai_source {
+                let current_id = self.get_current_source_id_unlocked().ok();
+                if current_id.as_deref() == Some(&target.id) {
+                    return Ok(true);
+                }
+                self.select_input_source_unlocked(&target.id)?;
+                Ok(true)
+            } else {
+                Ok(false)
             }
-            self.select_input_source_unlocked(&target.id)?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        })
     }
 
     /// Automatically finds and switches to an active English keyboard layout (e.g. ABC, US).
     /// Returns `Ok(true)` if English layout is now active, or `Ok(false)` if no English layout was found.
     pub fn switch_to_english(&self) -> Result<bool, TisError> {
-        let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let sources = self.list_input_sources_unlocked(false)?;
-        let en_source = sources.iter().find(|s| {
-            s.languages
-                .first()
-                .map(|l| l.starts_with("en"))
-                .unwrap_or(false)
-                || s.id.contains("ABC")
-                || s.id.contains("US")
-                || s.name.to_lowercase().contains("english")
-        });
+        run_on_main(|| {
+            let _guard = TIS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let sources = self.list_input_sources_unlocked(false)?;
+            let en_source = sources.iter().find(|s| {
+                s.languages
+                    .first()
+                    .map(|l| l.starts_with("en"))
+                    .unwrap_or(false)
+                    || s.id.contains("ABC")
+                    || s.id.contains("US")
+                    || s.name.to_lowercase().contains("english")
+            });
 
-        if let Some(target) = en_source {
-            let current_id = self.get_current_source_id_unlocked().ok();
-            if current_id.as_deref() == Some(&target.id) {
-                return Ok(true);
+            if let Some(target) = en_source {
+                let current_id = self.get_current_source_id_unlocked().ok();
+                if current_id.as_deref() == Some(&target.id) {
+                    return Ok(true);
+                }
+                self.select_input_source_unlocked(&target.id)?;
+                Ok(true)
+            } else {
+                Ok(false)
             }
-            self.select_input_source_unlocked(&target.id)?;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        })
     }
 }
 
@@ -261,8 +347,8 @@ pub(crate) unsafe fn cfarray_to_string_vec(cf_arr: ffi::CFArrayRef) -> Vec<Strin
     let mut vec = Vec::with_capacity(count as usize);
     for i in 0..count {
         let item = ffi::CFArrayGetValueAtIndex(cf_arr, i) as ffi::CFStringRef;
-        if !item.is_null() {
-            vec.push(CFString::wrap_under_get_rule(item).to_string());
+        if let Some(s) = cfstring_to_string(item) {
+            vec.push(s);
         }
     }
     vec
@@ -290,7 +376,11 @@ unsafe fn extract_source_info(source: ffi::TISInputSourceRef) -> Option<InputSou
     let name = cfstring_to_string(name_prop as ffi::CFStringRef).unwrap_or_else(|| id.clone());
 
     let langs_prop = ffi::TISGetInputSourceProperty(source, ffi::kTISPropertyInputSourceLanguages);
-    let languages = cfarray_to_string_vec(langs_prop as ffi::CFArrayRef);
+    let languages = if !langs_prop.is_null() {
+        cfarray_to_string_vec(langs_prop as ffi::CFArrayRef)
+    } else {
+        Vec::new()
+    };
 
     Some(InputSourceInfo {
         id,

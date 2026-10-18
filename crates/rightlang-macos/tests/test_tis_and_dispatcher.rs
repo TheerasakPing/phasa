@@ -1,23 +1,23 @@
+use core_foundation::base::{CFRelease, CFTypeRef};
 use rightlang_macos::dispatcher::KeyDispatcher;
 use rightlang_macos::event::{extract_characters, is_event_tagged_as_rightlang};
 use rightlang_macos::ffi::{
-    CFRelease, CFTypeRef, CGEventGetIntegerValueField, KEY_CODE_BACKSPACE,
-    K_CG_KEYBOARD_EVENT_KEYCODE,
+    CGEventGetIntegerValueField, KEY_CODE_BACKSPACE, K_CG_KEYBOARD_EVENT_KEYCODE,
 };
 use rightlang_macos::tis::{InputSourceManager, TisError};
 
 #[test]
 fn test_query_current_input_source() {
     let manager = InputSourceManager::new();
-    let current_id = manager
-        .get_current_source_id()
-        .expect("Failed to get current input source ID");
-
+    let current_id = manager.get_current_source_id();
     assert!(
-        !current_id.is_empty(),
-        "Current input source ID must not be empty"
+        current_id.is_ok(),
+        "Expected current input source ID, got error: {:?}",
+        current_id.err()
     );
-    println!("Current active input source ID: {}", current_id);
+    let id_str = current_id.unwrap();
+    println!("Current active input source ID: {}", id_str);
+    assert!(!id_str.is_empty());
 }
 
 #[test]
@@ -25,28 +25,31 @@ fn test_list_keyboard_input_sources() {
     let manager = InputSourceManager::new();
     let sources = manager
         .list_keyboard_input_sources()
-        .expect("Failed to list keyboard input sources");
-
+        .expect("Failed to list enabled keyboard input sources");
+    println!("Enabled keyboard sources count: {}", sources.len());
     assert!(
         !sources.is_empty(),
         "At least one keyboard input source must be enabled on macOS"
     );
 
     for s in &sources {
-        assert!(!s.id.is_empty(), "Source ID should not be empty");
-        assert!(!s.name.is_empty(), "Source name should not be empty");
-        println!(
-            "Input source: id='{}', name='{}', languages={:?}",
-            s.id, s.name, s.languages
-        );
+        println!("  - ID: {}, Name: {}, Languages: {:?}", s.id, s.name, s.languages);
+        assert!(!s.id.is_empty());
+        assert!(!s.name.is_empty());
     }
+
+    let all_sources = manager
+        .list_all_installed_keyboard_input_sources()
+        .expect("Failed to list installed keyboard input sources");
+    assert!(all_sources.len() >= sources.len());
 }
 
 #[test]
 fn test_select_input_source_not_found() {
     let manager = InputSourceManager::new();
-    let result = manager.select_input_source("com.apple.nonexistent.keyboard.layout.12345");
-    match result {
+    let res = manager.select_input_source("com.apple.nonexistent.keyboard.layout.12345");
+    assert!(res.is_err());
+    match res {
         Err(TisError::SourceNotFound(id)) => {
             assert_eq!(id, "com.apple.nonexistent.keyboard.layout.12345");
         }
@@ -107,6 +110,18 @@ fn test_switch_input_sources_and_restore() {
         .get_current_source_id()
         .expect("Failed to get restored source ID");
     assert_eq!(initial_id, restored_id);
+}
+
+#[test]
+fn test_tis_thread_safety_from_background_thread() {
+    let handle = std::thread::spawn(|| {
+        let manager = InputSourceManager::new();
+        let current = manager.get_current_source_id();
+        assert!(current.is_ok());
+        let sources = manager.list_keyboard_input_sources();
+        assert!(sources.is_ok());
+    });
+    handle.join().expect("Background thread panicked");
 }
 
 #[test]

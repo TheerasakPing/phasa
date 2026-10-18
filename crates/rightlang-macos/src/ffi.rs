@@ -160,3 +160,20 @@ extern "C" {
     ) -> *const c_void;
     pub fn TISSelectInputSource(source: TISInputSourceRef) -> OSStatus;
 }
+
+#[link(name = "System", kind = "dylib")]
+extern "C" {
+    pub static _dispatch_main_q: libc::c_void;
+    pub fn dispatch_sync_f(
+        queue: *const libc::c_void,
+        context: *mut libc::c_void,
+        work: unsafe extern "C" fn(*mut libc::c_void),
+    );
+}
+
+#[link(name = "objc")]
+extern "C" {
+    pub fn objc_getClass(name: *const libc::c_char) -> *mut libc::c_void;
+    pub fn sel_registerName(name: *const libc::c_char) -> *mut libc::c_void;
+    pub fn objc_msgSend();
+}
