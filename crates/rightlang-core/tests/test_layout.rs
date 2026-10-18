@@ -1,5 +1,5 @@
 use rightlang_core::{
-    layout::{KEDMANEE, QWERTY},
+    layout::{DVORAK, KEDMANEE, PATTACHOTE, QWERTY},
     KeyTranslator, KeyboardLayout,
 };
 
@@ -20,6 +20,36 @@ fn test_kedmanee_to_qwerty_basic() {
 }
 
 #[test]
+fn test_dvorak_to_pattachote_basic() {
+    let d_to_p = KeyTranslator::new(KeyboardLayout::Dvorak, KeyboardLayout::Pattachote);
+    assert_eq!(d_to_p.convert_str("byi;"), "ครับ");
+    assert_eq!(d_to_p.convert_str("ครับ"), "byi;");
+
+    let p_to_d = KeyTranslator::new(KeyboardLayout::Pattachote, KeyboardLayout::Dvorak);
+    assert_eq!(p_to_d.convert_str("ครับ"), "byi;");
+    assert_eq!(p_to_d.convert_str("byi;"), "ครับ");
+}
+
+#[test]
+fn test_qwerty_to_pattachote_basic() {
+    let q_to_p = KeyTranslator::new(KeyboardLayout::Qwerty, KeyboardLayout::Pattachote);
+    assert_eq!(q_to_p.convert_str("ntgz"), "ครับ");
+    assert_eq!(q_to_p.convert_str("ครับ"), "ntgz");
+
+    let p_to_q = KeyTranslator::new(KeyboardLayout::Pattachote, KeyboardLayout::Qwerty);
+    assert_eq!(p_to_q.convert_str("ครับ"), "ntgz");
+    assert_eq!(p_to_q.convert_str("ntgz"), "ครับ");
+}
+
+#[test]
+fn test_dvorak_to_kedmanee_basic() {
+    let d_to_k = KeyTranslator::new(KeyboardLayout::Dvorak, KeyboardLayout::Kedmanee);
+    // In Dvorak '8' maps to Kedmanee 'ค' (both at Row 0, Key 8)
+    assert_eq!(d_to_k.convert_char('8'), 'ค');
+    assert_eq!(d_to_k.convert_char('ค'), '8');
+}
+
+#[test]
 fn test_shifted_keys() {
     let q_to_k = KeyTranslator::new(KeyboardLayout::Qwerty, KeyboardLayout::Kedmanee);
     assert_eq!(q_to_k.convert_char('!'), '+');
@@ -32,6 +62,25 @@ fn test_shifted_keys() {
     assert_eq!(k_to_q.convert_char('๑'), '@');
     assert_eq!(k_to_q.convert_char('๒'), '#');
     assert_eq!(k_to_q.convert_char('๓'), '$');
+}
+
+#[test]
+fn test_dvorak_pattachote_shifted() {
+    let d_to_p = KeyTranslator::new(KeyboardLayout::Dvorak, KeyboardLayout::Pattachote);
+    // Row 0 shifted: '!' -> '"', '@' -> '/'
+    assert_eq!(d_to_p.convert_char('!'), '"');
+    assert_eq!(d_to_p.convert_char('@'), '/');
+    assert_eq!(d_to_p.convert_char('#'), ',');
+    // Row 1 shifted: '<' -> 'ฤ', '>' -> 'ๆ'
+    assert_eq!(d_to_p.convert_char('<'), 'ฤ');
+    assert_eq!(d_to_p.convert_char('>'), 'ๆ');
+
+    let p_to_d = KeyTranslator::new(KeyboardLayout::Pattachote, KeyboardLayout::Dvorak);
+    assert_eq!(p_to_d.convert_char('"'), '!');
+    assert_eq!(p_to_d.convert_char('/'), '@');
+    assert_eq!(p_to_d.convert_char(','), '#');
+    assert_eq!(p_to_d.convert_char('ฤ'), '<');
+    assert_eq!(p_to_d.convert_char('ๆ'), '>');
 }
 
 #[test]
@@ -63,4 +112,8 @@ fn test_full_roundtrip_bijection() {
 
     assert_eq!(q_to_k.convert_str(QWERTY), KEDMANEE);
     assert_eq!(k_to_q.convert_str(KEDMANEE), QWERTY);
+
+    // Verify constants exist and have expected non-zero lengths
+    assert!(!DVORAK.is_empty());
+    assert!(!PATTACHOTE.is_empty());
 }

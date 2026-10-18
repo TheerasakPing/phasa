@@ -3,6 +3,64 @@ use std::collections::HashMap;
 pub const QWERTY: &str = "1234567890-=qwertyuiop[]\\asdfghjkl;'zxcvbnm,./!@#$%^&*()_+QWERTYUIOP{}|ASDFGHJKL:\"ZXCVBNM<>?";
 pub const KEDMANEE: &str =
     "ๅ/_ภถุึคตจขชๆไำพะัีรนยบลฃฟหกดเ้่าสวงผปแอิืทมใฝ+๑๒๓๔ู฿๕๖๗๘๙๐\"ฎฑธํ๊ณฯญฐ,ฅฤฆฏโฌ็๋ษศซ.()ฉฮฺ์?ฒฬฦ";
+pub const DVORAK: &str =
+    "1234567890[]',.pyfgcrl/=\\aoeuidhtns-;qjkxbmwvz!@#$%^&*(){}\"<>PYFGCRL?+|AOEUIDHTNS_:QJKXBMWVZ";
+pub const PATTACHOTE: &str =
+    "๒๓๔๕ู๗๘๙๐๑๖็ตยอร่ดมวแใฌฃ้ทงกัีานเไขบปลหิคสะจพ\"/,?ุ_.()-%๊ฤๆญษึฝซถฒฯภฅ๋ธำณ์ืผชโฆฑฎฏฐภัศฮฟฉฬ";
+
+pub const QWERTY_ROWS: [&str; 8] = [
+    "1234567890-=",
+    "qwertyuiop[]\\",
+    "asdfghjkl;'",
+    "zxcvbnm,./",
+    "!@#$%^&*()_+",
+    "QWERTYUIOP{}|",
+    "ASDFGHJKL:\"",
+    "ZXCVBNM<>?",
+];
+
+pub const DVORAK_ROWS: [&str; 8] = [
+    "1234567890[]",
+    "',.pyfgcrl/=\\",
+    "aoeuidhtns-",
+    ";qjkxbmwvz",
+    "!@#$%^&*(){}",
+    "\"<>PYFGCRL?+|",
+    "AOEUIDHTNS_",
+    ":QJKXBMWVZ",
+];
+
+pub const KEDMANEE_ROWS: [&str; 8] = [
+    "ๅ/_ภถุึคตจขช",
+    "ๆไำพะัีรนยบลฃ",
+    "ฟหกดเ้่าสวง",
+    "ผปแอิืทมใฝ",
+    "+๑๒๓๔ู฿๕๖๗๘๙",
+    "๐\"ฎฑธํ๊ณฯญฐ,ฅ",
+    "ฤฆฏโฌ็๋ษศซ.",
+    "()ฉฮฺ์?ฒฬฦ",
+];
+
+pub const PATTACHOTE_ROWS: [&str; 8] = [
+    "๒๓๔๕ู๗๘๙๐๑๖",
+    "็ตยอร่ดมวแใฌฃ",
+    "้ทงกัีานเไข",
+    "บปลหิคสะจพ",
+    "\"/,?ุ_.()-%",
+    "๊ฤๆญษึฝซถฒฯภฅ",
+    "๋ธำณ์ืผชโฆฑ",
+    "ฎฏฐภัศฮฟฉฬ",
+];
+
+/// Returns the 8 physical keyboard layout rows (4 unshifted, 4 shifted) for a given layout.
+pub fn layout_rows(layout: KeyboardLayout) -> &'static [&'static str; 8] {
+    match layout {
+        KeyboardLayout::Qwerty => &QWERTY_ROWS,
+        KeyboardLayout::Dvorak => &DVORAK_ROWS,
+        KeyboardLayout::Kedmanee => &KEDMANEE_ROWS,
+        KeyboardLayout::Pattachote => &PATTACHOTE_ROWS,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyboardLayout {
@@ -25,20 +83,15 @@ impl KeyTranslator {
         let mut forward_map = HashMap::new();
         let mut reverse_map = HashMap::new();
 
-        match (source, target) {
-            (KeyboardLayout::Qwerty, KeyboardLayout::Kedmanee) => {
-                for (q, k) in QWERTY.chars().zip(KEDMANEE.chars()) {
-                    forward_map.insert(q, k);
-                    reverse_map.insert(k, q);
-                }
+        let s_rows = layout_rows(source);
+        let t_rows = layout_rows(target);
+
+        for (s_row, t_row) in s_rows.iter().zip(t_rows.iter()) {
+            for (s, t) in s_row.chars().zip(t_row.chars()) {
+                // Preserve unshifted primary mappings encountered first before shifted duplicates
+                forward_map.entry(s).or_insert(t);
+                reverse_map.entry(t).or_insert(s);
             }
-            (KeyboardLayout::Kedmanee, KeyboardLayout::Qwerty) => {
-                for (q, k) in QWERTY.chars().zip(KEDMANEE.chars()) {
-                    forward_map.insert(k, q);
-                    reverse_map.insert(q, k);
-                }
-            }
-            _ => {}
         }
 
         Self {

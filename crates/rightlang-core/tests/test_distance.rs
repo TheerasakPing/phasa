@@ -162,10 +162,15 @@ fn test_lookup_performance() {
     let duration = start.elapsed();
     let avg_ns = duration.as_nanos() / (ITERATIONS as u128 * 3);
 
-    // Each lookup should take well under 100ns (typically ~5-15ns)
+    #[cfg(debug_assertions)]
+    let max_budget_ns = 250;
+    #[cfg(not(debug_assertions))]
+    let max_budget_ns = 100;
+
     assert!(
-        avg_ns < 100,
-        "Average lookup latency {:?} ns exceeded 100ns budget",
-        avg_ns
+        avg_ns < max_budget_ns,
+        "Average lookup latency {:?} ns exceeded {}ns budget",
+        avg_ns,
+        max_budget_ns
     );
 }
