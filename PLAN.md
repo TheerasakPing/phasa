@@ -51,8 +51,7 @@
   ```rust
   pub enum KeyboardLayout { Kedmanee, Pattachote, Qwerty, Dvorak }
   pub struct KeyTranslator { ... }
-  impl KeyTranslator {
-      pub fn new(source: KeyboardLayout, target: KeyboardLayout) -> Self;
+  impl KeyTranslator {\n      pub fn new(source: KeyboardLayout, target: KeyboardLayout) -> Self;
       pub fn convert_char(&self, ch: char) -> char;
       pub fn convert_str(&self, input: &str) -> String;
   }
@@ -134,19 +133,19 @@
   }
   ```
 
-- [ ] **Step 1: Write unit test for adjacent physical keys**
+- [x] **Step 1: Write unit test for adjacent physical keys**
   - Test distance between 'q' and 'w' is 1, between 'q' and 'p' > 1.
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
   `cargo test -p rightlang-core --test test_distance`
 
-- [ ] **Step 3: Implement distance matrix parser from `adjacent-column.txt`**
+- [x] **Step 3: Implement distance matrix parser from `adjacent-column.txt`**
   - Graph/table-based distance evaluator for physical key proximity.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
   `cargo test -p rightlang-core --test test_distance`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   `git commit -m "feat(core): implement physical key distance matrix"`
 
 ---
