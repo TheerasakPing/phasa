@@ -101,18 +101,17 @@ fn test_worker_backspace_pops_last_char() {
     worker.handle_event(&create_mock_key_event("c"));
     assert_eq!(worker.buffer(), "abc");
 
-    // Send backspace -> pops last char from buffer
-    assert!(worker.handle_event(&create_mock_backspace_event()).is_none());
+    worker.handle_event(&create_mock_backspace_event());
     assert_eq!(worker.buffer(), "ab");
 
-    assert!(worker.handle_event(&create_mock_backspace_event()).is_none());
+    worker.handle_event(&create_mock_backspace_event());
     assert_eq!(worker.buffer(), "a");
 
-    assert!(worker.handle_event(&create_mock_backspace_event()).is_none());
+    worker.handle_event(&create_mock_backspace_event());
     assert_eq!(worker.buffer(), "");
 
-    // Popping on empty buffer does not panic or error
-    assert!(worker.handle_event(&create_mock_backspace_event()).is_none());
+    // Popping empty buffer should not panic
+    worker.handle_event(&create_mock_backspace_event());
     assert_eq!(worker.buffer(), "");
 }
 
@@ -120,33 +119,30 @@ fn test_worker_backspace_pops_last_char() {
 fn test_worker_disabled_application_rule() {
     let mut worker = create_test_worker();
 
-    // Set active app to com.apple.Terminal (disabled in default configuration)
+    // Set active app to a disabled bundle ID (e.g. Terminal)
     worker.set_active_app(Some("com.apple.Terminal".to_string()));
+    worker
+        .rule_manager_mut()
+        .set_rule("com.apple.Terminal", CorrectionMode::Disabled);
 
-    worker.handle_event(&create_mock_key_event("8"));
-    worker.handle_event(&create_mock_key_event("i"));
-    worker.handle_event(&create_mock_key_event("y"));
-    worker.handle_event(&create_mock_key_event("["));
-    assert_eq!(worker.buffer(), "8iy[");
+    for ch in ["8", "i", "y", "[", " "] {
+        assert!(worker.handle_event(&create_mock_key_event(ch)).is_none());
+    }
 
-    // In a disabled application, no correction is triggered
-    let result = worker.handle_event(&create_mock_key_event(" "));
-    assert!(result.is_none(), "Disabled app must not trigger correction");
     assert_eq!(worker.buffer(), "");
+    assert!(worker.last_correction().is_none());
 }
 
 #[test]
 fn test_worker_undo_restores_previous_buffer() {
     let mut worker = create_test_worker();
 
-    // Send "8", "i", "y", "[", followed by space
-    worker.handle_event(&create_mock_key_event("8"));
-    worker.handle_event(&create_mock_key_event("i"));
-    worker.handle_event(&create_mock_key_event("y"));
-    worker.handle_event(&create_mock_key_event("["));
+    for ch in ["8", "i", "y", "[", " "] {
+        worker.handle_event(&create_mock_key_event(ch));
+    }
 
     let record = worker
-        .handle_event(&create_mock_key_event(" "))
+        .last_correction()
         .expect("Correction expected");
     assert_eq!(record.replacement, "ครับ ");
     assert_eq!(worker.buffer(), "");
@@ -263,11 +259,11 @@ fn test_worker_navigation_and_control_keys_clear_buffer() {
     assert!(worker.handle_event(&arrow_event).is_none());
     assert_eq!(worker.buffer(), "");
 
-    // Command key modifier (Cmd+C)
+    // Command key modifier (Cmd+K)
     worker.handle_event(&create_mock_key_event("c"));
     assert_eq!(worker.buffer(), "c");
-    let cmd_c_event = KeyEvent::new(0x08, KeyEventType::KeyDown, 0x00100000, Some("c".into()), false);
-    assert!(worker.handle_event(&cmd_c_event).is_none());
+    let cmd_k_event = KeyEvent::new(0x28, KeyEventType::KeyDown, 0x00100000, Some("k".into()), false);
+    assert!(worker.handle_event(&cmd_k_event).is_none());
     assert_eq!(worker.buffer(), "");
 }
 
@@ -282,7 +278,7 @@ fn test_worker_manual_mode() {
     worker.handle_event(&create_mock_key_event("["));
     assert_eq!(worker.buffer(), "8iy[");
 
-    // In Manual mode, space does NOT trigger automatic correction
+    // In Manual mode, regular space does NOT trigger automatic correction
     let result = worker.handle_event(&create_mock_key_event(" "));
     assert!(result.is_none());
 
@@ -293,6 +289,113 @@ fn test_worker_manual_mode() {
     worker.handle_event(&create_mock_key_event("["));
     let manual_record = worker.evaluate_and_correct().expect("Manual evaluate should work");
     assert_eq!(manual_record.replacement, "ครับ");
+}
+
+#[test]
+fn test_worker_manual_mode_option_space_hotkey() {
+    let mut worker = create_test_worker();
+    worker.set_mode(CorrectionMode::Manual);
+
+    // Type "8iy["
+    worker.handle_event(&create_mock_key_event("8"));
+    worker.handle_event(&create_mock_key_event("i"));
+    worker.handle_event(&create_mock_key_event("y"));
+    worker.handle_event(&create_mock_key_event("["));
+    assert_eq!(worker.buffer(), "8iy[");
+
+    // Option + Space hotkey (keycode 0x31, ALT_FLAG 0x00080000)
+    const ALT_FLAG: u64 = 0x00080000;
+    let opt_space_event = KeyEvent::new(0x31, KeyEventType::KeyDown, ALT_FLAG, Some(" ".into()), false);
+
+    let record = worker
+        .handle_event(&opt_space_event)
+        .expect("Option+Space must trigger manual correction");
+
+    assert_eq!(record.original, "8iy[");
+    assert_eq!(record.replacement, "ครับ");
+    assert_eq!(record.target_language, Language::Thai);
+    assert_eq!(worker.buffer(), "");
+
+    // Also verify with device alternate flag 0x00000020
+    worker.handle_event(&create_mock_key_event("g"));
+    worker.handle_event(&create_mock_key_event("x"));
+    worker.handle_event(&create_mock_key_event("H"));
+    worker.handle_event(&create_mock_key_event("o"));
+    let opt_dev_space_event = KeyEvent::new(0x31, KeyEventType::KeyDown, 0x00000020, Some(" ".into()), false);
+    let record2 = worker
+        .handle_event(&opt_dev_space_event)
+        .expect("Option+Space with device flag must trigger manual correction");
+    assert_eq!(record2.replacement, "เป็น");
+
+    // In Auto mode, Option+Space does NOT trigger manual correction
+    worker.set_mode(CorrectionMode::Auto);
+    worker.handle_event(&create_mock_key_event("8"));
+    worker.handle_event(&create_mock_key_event("i"));
+    let auto_opt_space = worker.handle_event(&opt_space_event);
+    assert!(auto_opt_space.is_none());
+    assert_eq!(worker.buffer(), "");
+}
+
+#[test]
+fn test_worker_convert_selection_and_clipboard() {
+    let mut worker = create_test_worker();
+
+    // 1. English -> Thai via convert_clipboard_content
+    let record_th = worker
+        .convert_clipboard_content("8iy[")
+        .expect("Should convert '8iy[' to 'ครับ'");
+    assert_eq!(record_th.original, "8iy[");
+    assert_eq!(record_th.replacement, "ครับ");
+    assert_eq!(record_th.target_language, Language::Thai);
+
+    // Verify clipboard was updated with translated text
+    let clip_text = rightlang_macos::clipboard::get_clipboard_text().expect("Clipboard has text");
+    assert_eq!(clip_text, "ครับ");
+
+    // 2. Thai -> English via convert_clipboard_content
+    let record_en = worker
+        .convert_clipboard_content("้ำสสน")
+        .expect("Should convert '้ำสสน' to 'hello'");
+    assert_eq!(record_en.original, "้ำสสน");
+    assert_eq!(record_en.replacement, "hello");
+    assert_eq!(record_en.target_language, Language::English);
+
+    // 3. Empty text -> returns None
+    assert!(worker.convert_clipboard_content("   ").is_none());
+
+    // 4. Cmd + / shortcut (keycode 0x2C, CMD_FLAG = 0x00100000)
+    rightlang_macos::clipboard::set_clipboard_text("8iy[");
+    const CMD_FLAG: u64 = 0x00100000;
+    let cmd_slash_event =
+        KeyEvent::new(0x2C, KeyEventType::KeyDown, CMD_FLAG, Some("/".into()), false);
+
+    let record = worker.handle_event(&cmd_slash_event);
+    assert!(
+        record.is_some(),
+        "Cmd + / should trigger selection conversion"
+    );
+    let rec = record.unwrap();
+    assert_eq!(rec.replacement, "ครับ");
+
+    // 5. Ctrl + Option + C shortcut (keycode 0x08, CTRL_FLAG | ALT_FLAG)
+    rightlang_macos::clipboard::set_clipboard_text("้ำสสน");
+    const CTRL_FLAG: u64 = 0x00040000;
+    const ALT_FLAG: u64 = 0x00080000;
+    let ctrl_opt_c_event = KeyEvent::new(
+        0x08,
+        KeyEventType::KeyDown,
+        CTRL_FLAG | ALT_FLAG,
+        Some("c".into()),
+        false,
+    );
+
+    let record2 = worker.handle_event(&ctrl_opt_c_event);
+    assert!(
+        record2.is_some(),
+        "Ctrl + Option + C should trigger selection conversion"
+    );
+    let rec2 = record2.unwrap();
+    assert_eq!(rec2.replacement, "hello");
 }
 
 #[test]

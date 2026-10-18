@@ -1,6 +1,6 @@
 //! Native macOS menu bar status item and tray menu management for RightLang.
 
-use muda::{Menu, MenuItem, PredefinedMenuItem};
+use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::config::CorrectionMode;
@@ -10,6 +10,8 @@ use crate::config::CorrectionMode;
 pub enum TrayAction {
     /// Update the active correction mode.
     SetMode(CorrectionMode),
+    /// Toggle Start at Login LaunchAgent service.
+    ToggleStartAtLogin,
     /// Open the RightLang configuration folder in Finder / file manager.
     OpenConfigDir,
     /// Terminate the daemon gracefully.
@@ -21,6 +23,7 @@ pub struct TrayManager {
     #[allow(dead_code)]
     tray_icon: Option<TrayIcon>,
     mode_item: Option<MenuItem>,
+    start_login_item: Option<CheckMenuItem>,
     current_mode: CorrectionMode,
 }
 
@@ -34,6 +37,7 @@ impl TrayManager {
             return Ok(Self {
                 tray_icon: None,
                 mode_item: None,
+                start_login_item: None,
                 current_mode: initial_mode,
             });
         }
@@ -49,6 +53,16 @@ impl TrayManager {
         let item_disabled = MenuItem::with_id("set_disabled", "Set Disabled", true, None);
 
         let sep2 = PredefinedMenuItem::separator();
+        let is_service_installed = crate::service::is_service_installed();
+        let item_start_login = CheckMenuItem::with_id(
+            "toggle_start_login",
+            "Start at Login",
+            true,
+            is_service_installed,
+            None,
+        );
+
+        let sep3 = PredefinedMenuItem::separator();
         let item_open_config =
             MenuItem::with_id("open_config", "Open Config Directory", true, None);
         let item_quit = MenuItem::with_id("quit", "Quit RightLang", true, None);
@@ -60,6 +74,8 @@ impl TrayManager {
             &item_manual,
             &item_disabled,
             &sep2,
+            &item_start_login,
+            &sep3,
             &item_open_config,
             &item_quit,
         ])?;
@@ -91,6 +107,7 @@ impl TrayManager {
         Ok(Self {
             tray_icon,
             mode_item: Some(mode_item),
+            start_login_item: Some(item_start_login),
             current_mode: initial_mode,
         })
     }
@@ -184,6 +201,21 @@ impl TrayManager {
         }
     }
 
+    /// Returns whether the Start at Login checkbox is currently checked in the tray.
+    pub fn is_start_at_login(&self) -> bool {
+        self.start_login_item
+            .as_ref()
+            .map(|i| i.is_checked())
+            .unwrap_or(false)
+    }
+
+    /// Updates the checkmark state for the Start at Login menu item.
+    pub fn set_start_at_login(&mut self, enabled: bool) {
+        if let Some(ref item) = self.start_login_item {
+            item.set_checked(enabled);
+        }
+    }
+
     /// Polls for user interactions from the tray dropdown menu.
     pub fn check_action(&self) -> Option<TrayAction> {
         if let Ok(event) = muda::MenuEvent::receiver().try_recv() {
@@ -199,6 +231,7 @@ impl TrayManager {
             "set_auto" => Some(TrayAction::SetMode(CorrectionMode::Auto)),
             "set_manual" => Some(TrayAction::SetMode(CorrectionMode::Manual)),
             "set_disabled" => Some(TrayAction::SetMode(CorrectionMode::Disabled)),
+            "toggle_start_login" => Some(TrayAction::ToggleStartAtLogin),
             "open_config" => Some(TrayAction::OpenConfigDir),
             "quit" => Some(TrayAction::Quit),
             _ => None,

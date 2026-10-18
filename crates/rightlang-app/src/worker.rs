@@ -73,7 +73,8 @@ impl KeyWorker {
     pub fn set_user_dict_paths<P: AsRef<Path>>(&mut self, thai_path: P, eng_path: P) {
         self.user_thai_dict_path = thai_path.as_ref().to_path_buf();
         self.user_eng_dict_path = eng_path.as_ref().to_path_buf();
-        let _ = self.dictionary.load_user_words(&self.user_thai_dict_path, &self.user_eng_dict_path);
+        let _ =
+            self.dictionary.load_user_words(&self.user_thai_dict_path, &self.user_eng_dict_path);
     }
 
     /// Returns the active paths for custom Thai and English user dictionaries.
@@ -85,7 +86,9 @@ impl KeyWorker {
     pub fn learn_word(&mut self, word: &str, lang: Language) -> bool {
         let added = self.dictionary.add_user_word(word, lang);
         if added && self.config.auto_learn {
-            let _ = self.dictionary.save_user_words(&self.user_thai_dict_path, &self.user_eng_dict_path);
+            let _ = self
+                .dictionary
+                .save_user_words(&self.user_thai_dict_path, &self.user_eng_dict_path);
         }
         added
     }
@@ -104,14 +107,16 @@ impl KeyWorker {
             return None;
         }
 
-        // Check for Undo shortcuts: Cmd+Shift+Z or Ctrl+Option+Z
+        // Key modifier flags
         // macOS kCGEventFlagMaskShift = 0x00020000, Control = 0x00040000,
-        // Alternate (Option) = 0x00080000, Command = 0x00100000
+        // Alternate (Option) = 0x00080000, Device Option = 0x00000020, Command = 0x00100000
         const SHIFT_FLAG: u64 = 0x00020000;
         const CTRL_FLAG: u64 = 0x00040000;
         const ALT_FLAG: u64 = 0x00080000;
+        const ALT_DEVICE_FLAG: u64 = 0x00000020;
         const CMD_FLAG: u64 = 0x00100000;
 
+        // Check for Undo shortcuts: Cmd+Shift+Z or Ctrl+Option+Z
         let is_z = event.key_code == 0x06
             || event
                 .characters
@@ -127,6 +132,29 @@ impl KeyWorker {
         if is_cmd_shift_z || is_ctrl_opt_z {
             self.undo();
             return None;
+        }
+
+        // Check for "Convert Selected Text" shortcuts: Cmd + / or Ctrl + Option + C
+        let is_slash = event.key_code == 0x2C
+            || event
+                .characters
+                .as_deref()
+                .map(|s| s == "/")
+                .unwrap_or(false);
+        let is_cmd_slash = is_slash && ((event.flags & CMD_FLAG) != 0);
+
+        let is_c = event.key_code == 0x08
+            || event
+                .characters
+                .as_deref()
+                .map(|s| s.eq_ignore_ascii_case("c") || s == "\u{3}")
+                .unwrap_or(false);
+        let is_ctrl_opt_c =
+            is_c && ((event.flags & CTRL_FLAG) != 0) && ((event.flags & ALT_FLAG) != 0);
+
+        if is_cmd_slash || is_ctrl_opt_c {
+            self.clear_buffer();
+            return self.convert_selection();
         }
 
         // Backspace key (macOS key code 0x33 = 51)
@@ -159,8 +187,20 @@ impl KeyWorker {
             || event
                 .characters
                 .as_deref()
-                .map(|s| s == " ")
+                .map(|s| s == " " || s == "\u{00a0}")
                 .unwrap_or(false);
+
+        // Check for Manual Mode trigger hotkey: Option + Space
+        let is_opt_space = is_space && ((event.flags & (ALT_FLAG | ALT_DEVICE_FLAG)) != 0);
+        if is_opt_space {
+            let current_app_id = self.resolve_active_app();
+            let mode = self.rule_manager.mode_for_app(&current_app_id);
+            if mode == CorrectionMode::Manual {
+                return self.evaluate_and_correct();
+            }
+            self.clear_buffer();
+            return None;
+        }
 
         if is_space {
             let current_app_id = self.resolve_active_app();
@@ -192,6 +232,97 @@ impl KeyWorker {
         }
 
         None
+    }
+
+    /// Converts currently selected text in the active application.
+    ///
+    /// Copies selected text via Cmd+C, converts it between keyboard layouts,
+    /// sets the converted text on the clipboard, pastes it via Cmd+V,
+    /// and switches the input source language accordingly.
+    pub fn convert_selection(&mut self) -> Option<CorrectionRecord> {
+        const CMD_FLAG: u64 = 0x00100000;
+        const KEY_CODE_C: u16 = 0x08;
+
+        // 1. Dispatch synthetic Cmd+C to copy current selection
+        let _ = self.dispatcher.send_key_combination(KEY_CODE_C, CMD_FLAG, 5_000);
+
+        // 2. Small wait to allow target app to populate clipboard
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // 3. Read clipboard text
+        let text = rightlang_macos::clipboard::get_clipboard_text()?;
+        self.convert_clipboard_content(&text)
+    }
+
+    /// Converts given text content between layouts and pastes via clipboard emulation.
+    pub fn convert_clipboard_content(&mut self, text: &str) -> Option<CorrectionRecord> {
+        const CMD_FLAG: u64 = 0x00100000;
+        const KEY_CODE_V: u16 = 0x09;
+
+        if text.trim().is_empty() {
+            return None;
+        }
+
+        let converted = self.translator.convert_str(text);
+        if converted == text {
+            return None;
+        }
+
+        // Set translated text on clipboard
+        rightlang_macos::clipboard::set_clipboard_text(&converted);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+
+        // Dispatch synthetic Cmd+V to paste
+        let _ = self.dispatcher.send_key_combination(KEY_CODE_V, CMD_FLAG, 5_000);
+
+        // Detect target language and switch input source
+        let target_lang = self.detect_target_language(&converted);
+        match target_lang {
+            Language::Thai => {
+                let _ = self.input_source_manager.switch_to_thai();
+            }
+            Language::English => {
+                let _ = self.input_source_manager.switch_to_english();
+            }
+        }
+
+        let record = CorrectionRecord {
+            original: text.to_string(),
+            replacement: converted.clone(),
+            target_language: target_lang,
+            timestamp: Instant::now(),
+        };
+
+        if self.config.auto_learn {
+            self.learn_word(converted.trim(), target_lang);
+        }
+
+        self.last_correction = Some(record.clone());
+        self.buffer.clear();
+        Some(record)
+    }
+
+    /// Detects whether the converted string is predominantly Thai or English.
+    pub fn detect_target_language(&self, text: &str) -> Language {
+        if let Some(lang) = self.dictionary.detect_language(text.trim()) {
+            return lang;
+        }
+
+        let mut thai_count = 0;
+        let mut eng_count = 0;
+        for c in text.chars() {
+            if ('\u{0e00}'..='\u{0e7f}').contains(&c) {
+                thai_count += 1;
+            } else if c.is_ascii_alphabetic() {
+                eng_count += 1;
+            }
+        }
+
+        if thai_count >= eng_count {
+            Language::Thai
+        } else {
+            Language::English
+        }
     }
 
     /// Check buffer and trigger correction if mismatched language is detected.

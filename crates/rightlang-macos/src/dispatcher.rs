@@ -121,6 +121,46 @@ impl KeyDispatcher {
         Ok(())
     }
 
+    /// Dispatches a synthetic key combination (key down followed by key up with modifier flags).
+    ///
+    /// Every event is tagged with `RIGHTLANG_EVENT_TAG` so `EventTapListener` ignores them.
+    pub fn send_key_combination(
+        &self,
+        keycode: u16,
+        flags: u64,
+        delay_us: u64,
+    ) -> Result<(), DispatchError> {
+        unsafe {
+            let event_down = ffi::CGEventCreateKeyboardEvent(std::ptr::null_mut(), keycode, true);
+            if event_down.is_null() {
+                return Err(DispatchError::EventCreationFailed);
+            }
+            tag_event_as_rightlang(event_down);
+            ffi::CGEventSetFlags(event_down, flags);
+            ffi::CGEventPost(K_CG_HID_EVENT_TAP, event_down);
+            ffi::CFRelease(event_down as ffi::CFTypeRef);
+
+            if delay_us > 0 {
+                std::thread::sleep(Duration::from_micros(delay_us));
+            }
+
+            let event_up = ffi::CGEventCreateKeyboardEvent(std::ptr::null_mut(), keycode, false);
+            if event_up.is_null() {
+                return Err(DispatchError::EventCreationFailed);
+            }
+            tag_event_as_rightlang(event_up);
+            ffi::CGEventSetFlags(event_up, flags);
+            ffi::CGEventPost(K_CG_HID_EVENT_TAP, event_up);
+            ffi::CFRelease(event_up as ffi::CFTypeRef);
+
+            if delay_us > 0 {
+                std::thread::sleep(Duration::from_micros(delay_us));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Dispatches `backspace_count` synthetic backspaces, followed by typing `replacement` text.
     ///
     /// Every event is tagged with `RIGHTLANG_EVENT_TAG` so `EventTapListener` ignores them.

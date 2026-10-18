@@ -71,7 +71,17 @@ pub const K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFFFFFE;
 pub const K_CG_EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFFFFFF;
 
 // KeyCode constants
+pub const KEY_CODE_C: CGKeyCode = 0x08; // 8
+pub const KEY_CODE_V: CGKeyCode = 0x09; // 9
+pub const KEY_CODE_SLASH: CGKeyCode = 0x2C; // 44
+pub const KEY_CODE_SPACE: CGKeyCode = 0x31; // 49
 pub const KEY_CODE_BACKSPACE: CGKeyCode = 0x33; // 51
+
+// CGEventFlags modifier masks
+pub const K_CG_EVENT_FLAG_MASK_SHIFT: CGEventFlags = 0x00020000;
+pub const K_CG_EVENT_FLAG_MASK_CONTROL: CGEventFlags = 0x00040000;
+pub const K_CG_EVENT_FLAG_MASK_ALTERNATE: CGEventFlags = 0x00080000;
+pub const K_CG_EVENT_FLAG_MASK_COMMAND: CGEventFlags = 0x00100000;
 
 // Carbon Text Input Source (TIS) types and status
 #[repr(C)]

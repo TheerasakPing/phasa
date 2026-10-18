@@ -3,6 +3,7 @@
 pub mod config;
 pub mod notify;
 pub mod rules;
+pub mod service;
 pub mod tray;
 pub mod worker;
 

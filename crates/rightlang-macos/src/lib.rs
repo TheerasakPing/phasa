@@ -1,11 +1,13 @@
 //! Platform hook and dispatcher for macOS.
 
+pub mod clipboard;
 pub mod dispatcher;
 pub mod event;
 pub mod ffi;
 pub mod hook;
 pub mod tis;
 
+pub use clipboard::{get_clipboard_text, set_clipboard_text};
 pub use dispatcher::{DispatchError, KeyDispatcher};
 pub use event::{
     extract_characters, is_event_tagged_as_rightlang, is_rightlang_event, tag_event_as_rightlang,

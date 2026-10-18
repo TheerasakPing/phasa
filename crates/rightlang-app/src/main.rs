@@ -43,6 +43,20 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
                 let _ = state.cmd_tx.send(WorkerCommand::SetMode(mode));
                 println!("[RightLang] Tray menu set mode to: {:?}", mode);
             }
+            TrayAction::ToggleStartAtLogin => {
+                match rightlang_app::service::toggle_launchd_service() {
+                    Ok(new_state) => {
+                        state.tray_manager.set_start_at_login(new_state);
+                        println!("[RightLang] Start at login toggled to: {}", new_state);
+                    }
+                    Err(err) => {
+                        eprintln!("[RightLang] Failed to toggle start at login: {}", err);
+                        state
+                            .tray_manager
+                            .set_start_at_login(rightlang_app::service::is_service_installed());
+                    }
+                }
+            }
             TrayAction::OpenConfigDir => {
                 let _ = TrayManager::open_config_dir();
             }
@@ -93,8 +107,7 @@ fn print_status() {
     }
 
     // 2. Active Input Source
-    println!("
-[Input Sources (TIS)]");
+    println!("\n[Input Sources (TIS)]");
     let tis = InputSourceManager::new();
     match tis.get_current_source_id() {
         Ok(id) => println!("  Active Source ID: {}", id),
@@ -153,142 +166,38 @@ fn print_status() {
 
     // 5. LaunchAgent Service
     println!("\n[LaunchAgent Service]");
-    if let Some(home) = dirs::home_dir() {
-        let plist_path = home.join("Library/LaunchAgents/com.rightlang.daemon.plist");
-        println!(
-            "  Service Plist:     {:?} (installed: {})",
-            plist_path,
-            plist_path.exists()
-        );
-    }
+    let is_installed = rightlang_app::service::is_service_installed();
+    let plist_path = rightlang_app::service::launchd_plist_path();
+    println!(
+        "  Service Plist:     {:?} (installed: {})",
+        plist_path, is_installed
+    );
     println!("=========================================");
 }
 
 fn install_launchd_service() {
-    let current_exe = match std::env::current_exe() {
-        Ok(path) => match std::fs::canonicalize(&path) {
-            Ok(p) => p,
-            Err(_) => path,
-        },
-        Err(err) => {
-            eprintln!("Error determining executable path: {}", err);
-            std::process::exit(1);
-        }
-    };
-
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => {
-            eprintln!("Error: Cannot resolve user home directory.");
-            std::process::exit(1);
-        }
-    };
-
-    let launch_agents_dir = home.join("Library").join("LaunchAgents");
-    if let Err(err) = std::fs::create_dir_all(&launch_agents_dir) {
-        eprintln!("Error creating ~/Library/LaunchAgents directory: {}", err);
-        std::process::exit(1);
-    }
-
-    let config_dir = AppConfig::default_config_dir();
-    let _ = std::fs::create_dir_all(&config_dir);
-
-    let plist_path = launch_agents_dir.join("com.rightlang.daemon.plist");
-    let log_path = config_dir.join("daemon.log");
-    let err_log_path = config_dir.join("daemon.err.log");
-
-    let plist_content = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.rightlang.daemon</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{}</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>{}</string>
-    <key>StandardErrorPath</key>
-    <string>{}</string>
-    <key>ProcessType</key>
-    <string>Interactive</string>
-</dict>
-</plist>
-"#,
-        current_exe.display(),
-        log_path.display(),
-        err_log_path.display(),
-    );
-
-    if let Err(err) = std::fs::write(&plist_path, plist_content) {
-        eprintln!("Error writing LaunchAgent plist at {:?}: {}", plist_path, err);
-        std::process::exit(1);
-    }
-
-    // Try unload first in case it's currently registered
-    let _ = std::process::Command::new("launchctl")
-        .arg("unload")
-        .arg(&plist_path)
-        .output();
-
-    let load_output = std::process::Command::new("launchctl")
-        .arg("load")
-        .arg(&plist_path)
-        .output();
-
-    match load_output {
-        Ok(out) if out.status.success() => {
+    match rightlang_app::service::install_launchd_service() {
+        Ok(plist_path) => {
             println!("Successfully installed and loaded RightLang LaunchAgent:");
             println!("  Plist:  {:?}", plist_path);
-            println!("  Binary: {:?}", current_exe);
-            println!("  Logs:   {:?}", log_path);
             println!("RightLang is now running and will auto-start upon login!");
         }
-        Ok(out) => {
-            let err_msg = String::from_utf8_lossy(&out.stderr);
-            eprintln!(
-                "Warning: LaunchAgent written to {:?}, but launchctl load reported:\n{}",
-                plist_path, err_msg
-            );
-        }
         Err(err) => {
-            eprintln!(
-                "LaunchAgent written to {:?}, but failed to invoke launchctl: {}",
-                plist_path, err
-            );
+            eprintln!("Error installing LaunchAgent: {}", err);
+            std::process::exit(1);
         }
     }
 }
 
 fn uninstall_launchd_service() {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => {
-            eprintln!("Error: Cannot resolve user home directory.");
+    match rightlang_app::service::uninstall_launchd_service() {
+        Ok(()) => {
+            println!("Successfully unloaded and removed RightLang LaunchAgent service.");
+        }
+        Err(err) => {
+            eprintln!("Error uninstalling LaunchAgent: {}", err);
             std::process::exit(1);
         }
-    };
-
-    let plist_path = home.join("Library/LaunchAgents/com.rightlang.daemon.plist");
-    if plist_path.exists() {
-        let _ = std::process::Command::new("launchctl")
-            .arg("unload")
-            .arg(&plist_path)
-            .output();
-
-        if let Err(err) = std::fs::remove_file(&plist_path) {
-            eprintln!("Error removing plist at {:?}: {}", plist_path, err);
-            std::process::exit(1);
-        }
-        println!("Successfully unloaded and removed {:?}", plist_path);
-    } else {
-        println!("No LaunchAgent found at {:?}", plist_path);
     }
 }
 
