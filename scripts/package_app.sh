@@ -81,6 +81,9 @@ if [ -d "${ASSETS_DIR}" ]; then
     cp -v "${ASSETS_DIR}"/* "${RESOURCES_DIR}/"
 fi
 
+echo "=== Signing Application Bundle with Ad-Hoc Identity ==="
+codesign --force --deep --sign - "${APP_DIR}"
+
 echo "=== Packaging Complete ==="
 echo "Application bundle created at:"
 echo "  ${APP_DIR}"

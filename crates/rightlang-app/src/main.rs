@@ -8,15 +8,17 @@ use core_foundation_sys::base::{kCFAllocatorDefault, CFRelease};
 use core_foundation_sys::date::CFAbsoluteTimeGetCurrent;
 use core_foundation_sys::runloop::{
     kCFRunLoopCommonModes, CFRunLoopAddTimer, CFRunLoopGetCurrent, CFRunLoopRemoveSource,
-    CFRunLoopRemoveTimer, CFRunLoopRun, CFRunLoopStop, CFRunLoopTimerContext,
-    CFRunLoopTimerCreate, CFRunLoopTimerInvalidate, CFRunLoopTimerRef,
+    CFRunLoopRemoveTimer, CFRunLoopTimerContext, CFRunLoopTimerCreate, CFRunLoopTimerInvalidate,
+    CFRunLoopTimerRef,
 };
 use crossbeam_channel::unbounded;
 use rightlang_app::config::{AppConfig, CorrectionMode};
 use rightlang_app::notify::NotificationManager;
 use rightlang_app::tray::{TrayAction, TrayManager};
+use rightlang_app::ui::DashboardUI;
 use rightlang_app::worker::{load_dictionaries, KeyWorker};
 use rightlang_core::layout::{KeyTranslator, KeyboardLayout};
+use rightlang_core::DictionaryFilter;
 use rightlang_macos::event::KeyEvent;
 use rightlang_macos::hook::{is_accessibility_trusted, EventTapListener};
 use rightlang_macos::tis::InputSourceManager;
@@ -24,6 +26,71 @@ use rightlang_macos::tis::InputSourceManager;
 /// Commands sent from the menubar tray or UI thread to the keyboard worker thread.
 enum WorkerCommand {
     SetMode(CorrectionMode),
+}
+
+static CMD_TX: Mutex<Option<crossbeam_channel::Sender<WorkerCommand>>> = Mutex::new(None);
+static DICT_REF: Mutex<Option<Arc<DictionaryFilter>>> = Mutex::new(None);
+
+extern "C" fn on_playground_input(input_ptr: *const std::os::raw::c_char) {
+    if input_ptr.is_null() {
+        return;
+    }
+    let c_str = unsafe { std::ffi::CStr::from_ptr(input_ptr) };
+    let input = c_str.to_string_lossy();
+    if input.trim().is_empty() {
+        DashboardUI::set_playground_result("(รอรับข้อความทดสอบ)");
+        return;
+    }
+
+    let translator = KeyTranslator::new(KeyboardLayout::Qwerty, KeyboardLayout::Kedmanee);
+    let converted = translator.convert_str(&input);
+
+    if let Ok(lock) = DICT_REF.lock() {
+        if let Some(ref dict) = *lock {
+            if let Some(target) = dict.detect_mismatched_language(&input, &translator) {
+                let res = format!("{}  ➜  {} (ตรวจพบภาษา {:?})", input, converted, target);
+                DashboardUI::set_playground_result(&res);
+                return;
+            } else if let Some(lang) = dict.detect_language(&input) {
+                let res = format!("{} (ตรงกับคำในพจนานุกรม {:?})", input, lang);
+                DashboardUI::set_playground_result(&res);
+                return;
+            }
+        }
+    }
+
+    let res = format!("{}  ➜  {}", input, converted);
+    DashboardUI::set_playground_result(&res);
+}
+
+extern "C" fn on_mode_change(mode_idx: i32) {
+    let mode = match mode_idx {
+        0 => CorrectionMode::Auto,
+        1 => CorrectionMode::Manual,
+        _ => CorrectionMode::Disabled,
+    };
+    if let Ok(lock) = CMD_TX.lock() {
+        if let Some(ref tx) = *lock {
+            let _ = tx.send(WorkerCommand::SetMode(mode));
+            println!("[Phasa] Dashboard changed correction mode to: {:?}", mode);
+        }
+    }
+}
+
+extern "C" fn on_autostart_toggle(_enabled: bool) {
+    let _ = rightlang_app::service::toggle_launchd_service();
+}
+
+extern "C" fn on_notify_toggle(_enabled: bool) {
+    // In-memory toggle
+}
+
+extern "C" fn on_open_config() {
+    let _ = TrayManager::open_config_dir();
+}
+
+extern "C" fn on_open_accessibility() {
+    let _ = TrayManager::open_accessibility_settings();
 }
 
 struct TrayTimerState {
@@ -45,11 +112,15 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
     let state = unsafe { &mut *(info as *mut TrayTimerState) };
     while let Some(action) = state.tray_manager.check_action() {
         match action {
+            TrayAction::OpenDashboard => {
+                DashboardUI::show();
+            }
             TrayAction::OpenAccessibility => {
                 let _ = TrayManager::open_accessibility_settings();
             }
             TrayAction::SetMode(mode) => {
                 state.tray_manager.set_mode(mode);
+                DashboardUI::set_mode(mode);
                 let _ = state.cmd_tx.send(WorkerCommand::SetMode(mode));
                 println!("[Phasa] Tray menu set mode to: {:?}", mode);
             }
@@ -57,6 +128,7 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
                 match rightlang_app::service::toggle_launchd_service() {
                     Ok(new_state) => {
                         state.tray_manager.set_start_at_login(new_state);
+                        DashboardUI::set_autostart(new_state);
                         println!("[Phasa] Start at login toggled to: {}", new_state);
                     }
                     Err(err) => {
@@ -78,17 +150,17 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
                         l.stop();
                     }
                 }
-                unsafe {
-                    CFRunLoopStop(CFRunLoopGetCurrent());
-                }
+                DashboardUI::stop();
             }
         }
     }
 
-    // Check accessibility status if listener is not yet attached
+    // Check accessibility status dynamically
+    let trusted = is_accessibility_trusted(false);
+    DashboardUI::set_accessibility_status(trusted);
+
     let needs_attach = state.listener.lock().map(|l| l.is_none()).unwrap_or(false);
     if needs_attach {
-        let trusted = is_accessibility_trusted(false);
         if trusted {
             if let Ok(l) = EventTapListener::new(state.event_tx.clone()) {
                 let run_loop = unsafe { CFRunLoopGetCurrent() };
@@ -122,6 +194,7 @@ USAGE:
 OPTIONS:
     -h, --help               Print this help text and exit
     -v, --version            Print version information and exit
+    --dashboard              Open the Phasa GUI Dashboard & Settings Window
     --convert <TEXT>         Convert string directly between layouts and exit
     --check <TEXT>           Check language and dictionary membership and exit
     --status                 Display accessibility, input source, and daemon diagnostics
@@ -255,6 +328,9 @@ fn handle_cli_args(args: &[String]) {
             println!("phasa {}", env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
         }
+        "--dashboard" => {
+            // Handled in main()
+        }
         "--convert" => {
             if args.len() < 3 {
                 eprintln!(
@@ -335,11 +411,8 @@ fn main() {
 
     println!("Starting Phasa (ภาษา) Daemon...");
 
-    // Configure macOS application dock policy (Accessory / Menubar-only)
-    TrayManager::setup_dock_policy();
-
     // Check accessibility permissions
-    let initial_trusted = is_accessibility_trusted(true);
+    let initial_trusted = is_accessibility_trusted(false);
     if !initial_trusted {
         eprintln!(
             "Warning: Phasa requires Accessibility permissions to intercept keystrokes.\n\
@@ -358,19 +431,29 @@ fn main() {
     let notify_manager = Arc::new(NotificationManager::new(config.notify_on_correction));
 
     // Load dictionaries
-    let dict = load_dictionaries();
+    let dict = Arc::new(load_dictionaries());
     println!(
         "Dictionaries loaded: Thai words={}, English words={}",
         dict.thai_trie().len(),
         dict.eng_trie().len()
     );
 
+    // Save global dictionary ref for live playground
+    if let Ok(mut lock) = DICT_REF.lock() {
+        *lock = Some(Arc::clone(&dict));
+    }
+
     // Channels for keyboard events and worker commands
     let (tx, rx) = unbounded();
     let (cmd_tx, cmd_rx) = unbounded();
 
+    // Save global command sender
+    if let Ok(mut lock) = CMD_TX.lock() {
+        *lock = Some(cmd_tx.clone());
+    }
+
     // Create KeyWorker
-    let mut worker = KeyWorker::new(config.clone(), dict);
+    let mut worker = KeyWorker::new(config.clone(), (*dict).clone());
 
     // Spawn dedicated worker thread
     let running = Arc::new(AtomicBool::new(true));
@@ -413,7 +496,23 @@ fn main() {
 
     let run_loop = unsafe { CFRunLoopGetCurrent() };
 
-    // Initialize Status Bar Menubar Tray FIRST so icon is always visible
+    // Register GUI Dashboard Callbacks & Initialize Window
+    DashboardUI::register_callbacks(
+        on_playground_input,
+        on_mode_change,
+        on_autostart_toggle,
+        on_notify_toggle,
+        on_open_config,
+        on_open_accessibility,
+    );
+    DashboardUI::init(
+        config.mode,
+        rightlang_app::service::is_service_installed(),
+        config.notify_on_correction,
+    );
+    DashboardUI::set_accessibility_status(initial_trusted);
+
+    // Initialize Status Bar Menubar Tray
     let mut tray_manager = match TrayManager::new(config.mode) {
         Ok(tm) => Some(tm),
         Err(err) => {
@@ -443,8 +542,11 @@ fn main() {
             Err(err) => eprintln!("Warning: Failed to create EventTapListener: {}", err),
         }
     } else {
-        println!("[Phasa] Waiting for Accessibility permission. Tray is active and waiting...");
+        println!("[Phasa] Waiting for Accessibility permission. Showing Dashboard Window...");
     }
+
+    // Show Dashboard Window on launch so the user can see status & live playground
+    DashboardUI::show();
 
     let listener_arc = Arc::new(Mutex::new(initial_listener));
     let source_ptr_arc = Arc::new(Mutex::new(initial_source));
@@ -460,9 +562,7 @@ fn main() {
                 l.stop();
             }
         }
-        unsafe {
-            CFRunLoopStop(CFRunLoopGetCurrent());
-        }
+        DashboardUI::stop();
     }) {
         eprintln!("Warning: Failed to set Ctrl-C handler: {}", err);
     }
@@ -510,12 +610,10 @@ fn main() {
         }
     }
 
-    println!("Phasa (ภาษา) daemon running. Press Ctrl+C or use the Menubar tray to stop.");
+    println!("Phasa (ภาษา) running with Dashboard. Press Ctrl+C or use the Menubar tray to stop.");
 
-    // Run the main event run loop
-    unsafe {
-        CFRunLoopRun();
-    }
+    // Run the native AppKit main event loop (keeps app alive indefinitely)
+    DashboardUI::run();
 
     // Cleanup tray timer
     if let Some(timer) = timer_ref {

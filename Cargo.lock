@@ -965,6 +965,7 @@ dependencies = [
 name = "rightlang-app"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "core-foundation-sys",
  "crossbeam-channel",
  "ctrlc",

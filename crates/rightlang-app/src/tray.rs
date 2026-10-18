@@ -8,6 +8,8 @@ use crate::config::CorrectionMode;
 /// Actions emitted from tray menu item selections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
+    /// Open the Phasa Dashboard & Settings GUI window.
+    OpenDashboard,
     /// Update the active correction mode.
     SetMode(CorrectionMode),
     /// Toggle Start at Login LaunchAgent service.
@@ -49,6 +51,12 @@ impl TrayManager {
         let menu = Menu::new();
 
         let header_item = MenuItem::with_id("app_header", "Phasa (ภาษา) v0.1.0", false, None);
+        let item_dashboard = MenuItem::with_id(
+            "open_dashboard",
+            "Open Dashboard & Settings (เปิดหน้าต่างควบคุม)...",
+            true,
+            None,
+        );
         let item_perm = MenuItem::with_id(
             "open_accessibility",
             "⚠️ Grant Accessibility Permission (ให้สิทธิ์การเข้าถึง)",
@@ -80,6 +88,7 @@ impl TrayManager {
 
         menu.append_items(&[
             &header_item,
+            &item_dashboard,
             &item_perm,
             &mode_item,
             &sep1,
@@ -266,6 +275,7 @@ impl TrayManager {
     /// Maps a menu item identifier to a `TrayAction`.
     pub fn action_from_id(id: &str) -> Option<TrayAction> {
         match id {
+            "open_dashboard" => Some(TrayAction::OpenDashboard),
             "set_auto" => Some(TrayAction::SetMode(CorrectionMode::Auto)),
             "set_manual" => Some(TrayAction::SetMode(CorrectionMode::Manual)),
             "set_disabled" => Some(TrayAction::SetMode(CorrectionMode::Disabled)),
