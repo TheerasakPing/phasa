@@ -2,10 +2,10 @@
 name = "rightlang-app"
 version = "0.1.0"
 edition = "2021"
-default-run = "rightlang-daemon"
+default-run = "phasa"
 
 [[bin]]
-name = "rightlang-daemon"
+name = "phasa"
 path = "src/main.rs"
 
 [dependencies]

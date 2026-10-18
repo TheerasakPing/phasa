@@ -1,4 +1,4 @@
-//! Native macOS menu bar status item and tray menu management for RightLang.
+//! Native macOS menu bar status item and tray menu management for Phasa.
 
 use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
@@ -12,7 +12,7 @@ pub enum TrayAction {
     SetMode(CorrectionMode),
     /// Toggle Start at Login LaunchAgent service.
     ToggleStartAtLogin,
-    /// Open the RightLang configuration folder in Finder / file manager.
+    /// Open the Phasa configuration folder in Finder / file manager.
     OpenConfigDir,
     /// Terminate the daemon gracefully.
     Quit,
@@ -44,19 +44,20 @@ impl TrayManager {
 
         let menu = Menu::new();
 
+        let header_item = MenuItem::with_id("app_header", "Phasa (ภาษา) v0.1.0", false, None);
         let initial_text = format!("Mode: {}", Self::mode_display_name(initial_mode));
         let mode_item = MenuItem::with_id("mode_info", initial_text, false, None);
 
         let sep1 = PredefinedMenuItem::separator();
-        let item_auto = MenuItem::with_id("set_auto", "Set Auto Mode", true, None);
-        let item_manual = MenuItem::with_id("set_manual", "Set Manual Mode", true, None);
-        let item_disabled = MenuItem::with_id("set_disabled", "Set Disabled", true, None);
+        let item_auto = MenuItem::with_id("set_auto", "Auto (อัตโนมัติ)", true, None);
+        let item_manual = MenuItem::with_id("set_manual", "Manual (แปลงเฉพาะที่เลือก)", true, None);
+        let item_disabled = MenuItem::with_id("set_disabled", "Disabled (ปิดชั่วคราว)", true, None);
 
         let sep2 = PredefinedMenuItem::separator();
         let is_service_installed = crate::service::is_service_installed();
         let item_start_login = CheckMenuItem::with_id(
             "toggle_start_login",
-            "Start at Login",
+            "Start at Login (เปิดพร้อมเครื่อง)",
             true,
             is_service_installed,
             None,
@@ -64,10 +65,11 @@ impl TrayManager {
 
         let sep3 = PredefinedMenuItem::separator();
         let item_open_config =
-            MenuItem::with_id("open_config", "Open Config Directory", true, None);
-        let item_quit = MenuItem::with_id("quit", "Quit RightLang", true, None);
+            MenuItem::with_id("open_config", "Open Config Directory (~/.config/phasa)", true, None);
+        let item_quit = MenuItem::with_id("quit", "Quit Phasa", true, None);
 
         menu.append_items(&[
+            &header_item,
             &mode_item,
             &sep1,
             &item_auto,
@@ -83,9 +85,9 @@ impl TrayManager {
         let icon = Self::generate_default_icon();
         let mut builder = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_title("RL")
+            .with_title("ภาษา")
             .with_tooltip(format!(
-                "RightLang ({})",
+                "Phasa (ภาษา) - {}",
                 Self::mode_display_name(initial_mode)
             ));
 
@@ -197,7 +199,7 @@ impl TrayManager {
             item.set_text(format!("Mode: {}", display));
         }
         if let Some(tray) = &mut self.tray_icon {
-            let _ = tray.set_tooltip(Some(format!("RightLang ({})", display)));
+            let _ = tray.set_tooltip(Some(format!("Phasa (ภาษา) - {}", display)));
         }
     }
 
@@ -266,18 +268,17 @@ impl TrayManager {
 
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
-                // Generate a clean circular icon with border
                 let dx = (x as f32) - 7.5;
                 let dy = (y as f32) - 7.5;
                 let dist = (dx * dx + dy * dy).sqrt();
 
                 if dist <= 6.5 {
                     if dist >= 5.0 {
-                        // Border ring (solid white/light gray for menu bar template)
-                        rgba.extend_from_slice(&[255, 255, 255, 255]);
+                        // Cyan/violet neon border ring
+                        rgba.extend_from_slice(&[56, 189, 248, 255]);
                     } else if (3..=12).contains(&x) && (3..=12).contains(&y) {
-                        // Inner circle fill
-                        rgba.extend_from_slice(&[0, 122, 255, 255]);
+                        // Sleek deep violet-cyan fill
+                        rgba.extend_from_slice(&[14, 165, 233, 255]);
                     } else {
                         rgba.extend_from_slice(&[0, 0, 0, 0]);
                     }

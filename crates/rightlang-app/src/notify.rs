@@ -1,4 +1,4 @@
-//! Native macOS notification delivery for RightLang.
+//! Native macOS notification delivery for Phasa.
 
 use std::sync::{Arc, Mutex};
 
@@ -48,14 +48,14 @@ impl NotificationManager {
 
     /// Delivers an auto-correction notification.
     ///
-    /// Title: "RightLang"
+    /// Title: "Phasa (ภาษา)"
     /// Body: format!("{} → {}", original.trim(), replacement.trim())
     pub fn notify_correction(&self, original: &str, replacement: &str) -> bool {
         if !self.enabled {
             return false;
         }
 
-        let title = "RightLang";
+        let title = "Phasa (ภาษา)";
         let body = format!("{} → {}", original.trim(), replacement.trim());
         self.send_notification(title, &body)
     }

@@ -41,16 +41,16 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
             TrayAction::SetMode(mode) => {
                 state.tray_manager.set_mode(mode);
                 let _ = state.cmd_tx.send(WorkerCommand::SetMode(mode));
-                println!("[RightLang] Tray menu set mode to: {:?}", mode);
+                println!("[Phasa] Tray menu set mode to: {:?}", mode);
             }
             TrayAction::ToggleStartAtLogin => {
                 match rightlang_app::service::toggle_launchd_service() {
                     Ok(new_state) => {
                         state.tray_manager.set_start_at_login(new_state);
-                        println!("[RightLang] Start at login toggled to: {}", new_state);
+                        println!("[Phasa] Start at login toggled to: {}", new_state);
                     }
                     Err(err) => {
-                        eprintln!("[RightLang] Failed to toggle start at login: {}", err);
+                        eprintln!("[Phasa] Failed to toggle start at login: {}", err);
                         state
                             .tray_manager
                             .set_start_at_login(rightlang_app::service::is_service_installed());
@@ -61,7 +61,7 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
                 let _ = TrayManager::open_config_dir();
             }
             TrayAction::Quit => {
-                println!("\nShutdown requested from menubar tray. Stopping RightLang-RS daemon...");
+                println!("\nShutdown requested from menubar tray. Stopping Phasa daemon...");
                 state.running.store(false, Ordering::SeqCst);
                 if let Some(l) = state.listener_weak.upgrade() {
                     l.stop();
@@ -73,11 +73,11 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
 
 fn print_help() {
     println!(
-        r#"RightLang-RS Daemon {}
-Automatic Thai <-> English keyboard layout corrector for macOS
+        r#"Phasa (ภาษา) v{}
+Zero-latency intelligent Thai <-> English keyboard layout corrector for macOS
 
 USAGE:
-    rightlang-daemon [OPTIONS]
+    phasa [OPTIONS]
 
 OPTIONS:
     -h, --help               Print this help text and exit
@@ -93,7 +93,7 @@ OPTIONS:
 }
 
 fn print_status() {
-    println!("=== RightLang-RS Diagnostics & Status ===");
+    println!("=== Phasa (ภาษา) Diagnostics & Status ===");
     println!("Version: {}", env!("CARGO_PKG_VERSION"));
 
     // 1. Accessibility permissions
@@ -178,9 +178,9 @@ fn print_status() {
 fn install_launchd_service() {
     match rightlang_app::service::install_launchd_service() {
         Ok(plist_path) => {
-            println!("Successfully installed and loaded RightLang LaunchAgent:");
+            println!("Successfully installed and loaded Phasa LaunchAgent:");
             println!("  Plist:  {:?}", plist_path);
-            println!("RightLang is now running and will auto-start upon login!");
+            println!("Phasa is now running and will auto-start upon login!");
         }
         Err(err) => {
             eprintln!("Error installing LaunchAgent: {}", err);
@@ -192,7 +192,7 @@ fn install_launchd_service() {
 fn uninstall_launchd_service() {
     match rightlang_app::service::uninstall_launchd_service() {
         Ok(()) => {
-            println!("Successfully unloaded and removed RightLang LaunchAgent service.");
+            println!("Successfully unloaded and removed Phasa LaunchAgent service.");
         }
         Err(err) => {
             eprintln!("Error uninstalling LaunchAgent: {}", err);
@@ -212,13 +212,13 @@ fn handle_cli_args(args: &[String]) {
             std::process::exit(0);
         }
         "-v" | "--version" => {
-            println!("rightlang-daemon {}", env!("CARGO_PKG_VERSION"));
+            println!("phasa {}", env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
         }
         "--convert" => {
             if args.len() < 3 {
                 eprintln!(
-                    "Error: --convert requires a text argument.\nUsage: rightlang-daemon --convert <TEXT>"
+                    "Error: --convert requires a text argument.\nUsage: phasa --convert <TEXT>"
                 );
                 std::process::exit(1);
             }
@@ -231,7 +231,7 @@ fn handle_cli_args(args: &[String]) {
         "--check" => {
             if args.len() < 3 {
                 eprintln!(
-                    "Error: --check requires a text argument.\nUsage: rightlang-daemon --check <TEXT>"
+                    "Error: --check requires a text argument.\nUsage: phasa --check <TEXT>"
                 );
                 std::process::exit(1);
             }
@@ -281,7 +281,7 @@ fn handle_cli_args(args: &[String]) {
         }
         unknown => {
             eprintln!(
-                "Unknown option: {}\nRun 'rightlang-daemon --help' for available options.",
+                "Unknown option: {}\nRun 'phasa --help' for available options.",
                 unknown
             );
             std::process::exit(1);
@@ -293,7 +293,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     handle_cli_args(&args);
 
-    println!("Starting RightLang-RS Daemon...");
+    println!("Starting Phasa (ภาษา) Daemon...");
 
     // Configure macOS application dock policy (Accessory / Menubar-only)
     TrayManager::setup_dock_policy();
@@ -301,7 +301,7 @@ fn main() {
     // Check accessibility permissions
     if !is_accessibility_trusted(true) {
         eprintln!(
-            "Warning: RightLang-RS requires Accessibility permissions to intercept keystrokes.\n\
+            "Warning: Phasa requires Accessibility permissions to intercept keystrokes.\n\
              Please grant permissions in System Settings -> Privacy & Security -> Accessibility."
         );
     }
@@ -345,7 +345,7 @@ fn main() {
                         Ok(event) => {
                             if let Some(record) = worker.handle_event(&event) {
                                 println!(
-                                    "[RightLang] Corrected '{}' -> '{}' to {:?}",
+                                    "[Phasa] Corrected '{}' -> '{}' to {:?}",
                                     record.original, record.replacement, record.target_language
                                 );
                                 if notify_on_correction {
@@ -360,7 +360,7 @@ fn main() {
                     match cmd_res {
                         Ok(WorkerCommand::SetMode(mode)) => {
                             worker.set_mode(mode);
-                            println!("[RightLang] Worker updated correction mode: {:?}", mode);
+                            println!("[Phasa] Worker updated correction mode: {:?}", mode);
                         }
                         Err(_) => break,
                     }
@@ -385,7 +385,7 @@ fn main() {
     let listener_weak = Arc::downgrade(&listener);
     let running_signal = Arc::clone(&running);
     if let Err(err) = ctrlc::set_handler(move || {
-        println!("\nShutdown signal received. Stopping RightLang-RS daemon...");
+        println!("\nShutdown signal received. Stopping Phasa daemon...");
         running_signal.store(false, Ordering::SeqCst);
         if let Some(l) = listener_weak.upgrade() {
             l.stop();
@@ -445,7 +445,7 @@ fn main() {
         }
     }
 
-    println!("RightLang-RS daemon running. Press Ctrl+C or use the Menubar tray to stop.");
+    println!("Phasa (ภาษา) daemon running. Press Ctrl+C or use the Menubar tray to stop.");
 
     // Run the event tap loop (blocking on CFRunLoop)
     if let Err(err) = listener.run() {
@@ -469,5 +469,5 @@ fn main() {
     drop(listener);
 
     let _ = worker_handle.join();
-    println!("RightLang-RS daemon stopped cleanly.");
+    println!("Phasa daemon stopped cleanly.");
 }

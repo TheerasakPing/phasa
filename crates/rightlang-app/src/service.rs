@@ -6,20 +6,20 @@ use std::process::Command;
 
 use crate::config::AppConfig;
 
-pub const LAUNCHD_SERVICE_NAME: &str = "com.rightlang.daemon";
-pub const LAUNCHD_PLIST_FILENAME: &str = "com.rightlang.daemon.plist";
+pub const LAUNCHD_SERVICE_NAME: &str = "com.phasa.daemon";
+pub const LAUNCHD_PLIST_FILENAME: &str = "com.phasa.daemon.plist";
 
 /// Returns the standard path to user's LaunchAgents directory (`~/Library/LaunchAgents`).
 pub fn launch_agents_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join("Library").join("LaunchAgents"))
 }
 
-/// Returns the full path to the RightLang LaunchAgent plist file.
+/// Returns the full path to the Phasa LaunchAgent plist file.
 pub fn launchd_plist_path() -> Option<PathBuf> {
     launch_agents_dir().map(|d| d.join(LAUNCHD_PLIST_FILENAME))
 }
 
-/// Checks whether the RightLang LaunchAgent plist file currently exists.
+/// Checks whether the Phasa LaunchAgent plist file currently exists.
 pub fn is_service_installed() -> bool {
     launchd_plist_path().map(|p| p.exists()).unwrap_or(false)
 }
@@ -95,7 +95,7 @@ pub fn install_launchd_service_at(
     Ok(plist_path.to_path_buf())
 }
 
-/// Installs and loads the RightLang daemon LaunchAgent for the current user.
+/// Installs and loads the Phasa daemon LaunchAgent for the current user.
 pub fn install_launchd_service() -> Result<PathBuf, String> {
     let current_exe = std::env::current_exe()
         .map_err(|e| format!("Cannot resolve executable path: {}", e))?;
@@ -123,14 +123,14 @@ pub fn uninstall_launchd_service_at(plist_path: &Path, run_launchctl: bool) -> R
     Ok(())
 }
 
-/// Uninstalls and removes the RightLang daemon LaunchAgent.
+/// Uninstalls and removes the Phasa daemon LaunchAgent.
 pub fn uninstall_launchd_service() -> Result<(), String> {
     let plist_path =
         launchd_plist_path().ok_or_else(|| "Cannot resolve user home directory".to_string())?;
     uninstall_launchd_service_at(&plist_path, true)
 }
 
-/// Toggles the RightLang LaunchAgent.
+/// Toggles the Phasa LaunchAgent.
 /// Returns `Ok(true)` if newly installed, or `Ok(false)` if uninstalled.
 pub fn toggle_launchd_service() -> Result<bool, String> {
     if is_service_installed() {

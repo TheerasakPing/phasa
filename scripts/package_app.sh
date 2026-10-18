@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Script to build and package RightLang into a standalone macOS Application Bundle (.app)
-# Output: dist/RightLang.app ready for /Applications deployment
+# Script to build and package Phasa (ภาษา) into a standalone macOS Application Bundle (.app)
+# Output: dist/Phasa.app ready for /Applications deployment
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-echo "=== Building RightLang Release Binary ==="
+echo "=== Building Phasa Release Binary ==="
 cd "${ROOT_DIR}"
 cargo build --release
 
 DIST_DIR="${ROOT_DIR}/dist"
-APP_DIR="${DIST_DIR}/RightLang.app"
+APP_DIR="${DIST_DIR}/Phasa.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
@@ -23,8 +23,8 @@ mkdir -p "${MACOS_DIR}"
 mkdir -p "${RESOURCES_DIR}"
 
 echo "=== Installing Executable ==="
-cp "${ROOT_DIR}/target/release/rightlang-daemon" "${MACOS_DIR}/RightLang"
-chmod +x "${MACOS_DIR}/RightLang"
+cp "${ROOT_DIR}/target/release/phasa" "${MACOS_DIR}/phasa"
+chmod +x "${MACOS_DIR}/phasa"
 
 echo "=== Creating Info.plist ==="
 cat > "${CONTENTS_DIR}/Info.plist" << 'EOF'
@@ -35,19 +35,19 @@ cat > "${CONTENTS_DIR}/Info.plist" << 'EOF'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleName</key>
-    <string>RightLang</string>
+    <string>Phasa</string>
     <key>CFBundleDisplayName</key>
-    <string>RightLang</string>
+    <string>Phasa (ภาษา)</string>
     <key>CFBundleIdentifier</key>
-    <string>com.rightlang.daemon</string>
+    <string>com.phasa.app</string>
     <key>CFBundleVersion</key>
     <string>0.1.0</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleExecutable</key>
-    <string>RightLang</string>
+    <string>phasa</string>
     <key>CFBundleIconFile</key>
-    <string>rightlang-mac</string>
+    <string>phasa</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>
@@ -56,17 +56,19 @@ cat > "${CONTENTS_DIR}/Info.plist" << 'EOF'
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 Phasa Contributors.</string>
 </dict>
 </plist>
 EOF
 
 echo "=== Copying Application Icon ==="
-ICNS_ANALYSIS="/Volumes/Data/workspace/git/REA/rightlang-analysis/extracted/RightLang.app/Contents/Resources/rightlang-mac.icns"
-if [ -f "${ICNS_ANALYSIS}" ]; then
-    cp "${ICNS_ANALYSIS}" "${RESOURCES_DIR}/rightlang-mac.icns"
-    echo "Copied icon from analysis bundle."
+PHASA_ICNS="${ROOT_DIR}/assets/phasa.icns"
+if [ -f "${PHASA_ICNS}" ]; then
+    cp "${PHASA_ICNS}" "${RESOURCES_DIR}/phasa.icns"
+    echo "Copied Phasa icon asset (phasa.icns)."
 else
-    echo "Warning: rightlang-mac.icns not found at ${ICNS_ANALYSIS}."
+    echo "Warning: phasa.icns not found at ${PHASA_ICNS}."
 fi
 
 echo "=== Copying Dictionary and Layout Assets ==="
@@ -80,6 +82,10 @@ echo "Application bundle created at:"
 echo "  ${APP_DIR}"
 ls -la "${MACOS_DIR}"
 ls -la "${RESOURCES_DIR}"
-echo ""
-echo "To install to your Applications folder:"
-echo "  cp -R \"${APP_DIR}\" /Applications/"
+
+if [[ "${1:-}" == "--install" ]]; then
+    echo "=== Installing to /Applications/Phasa.app ==="
+    rm -rf "/Applications/Phasa.app"
+    cp -R "${APP_DIR}" "/Applications/Phasa.app"
+    echo "Successfully installed /Applications/Phasa.app!"
+fi

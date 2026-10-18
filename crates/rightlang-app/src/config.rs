@@ -1,4 +1,4 @@
-//! Configuration management for RightLang.
+//! Configuration management for Phasa.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Correction mode for RightLang.
+/// Correction mode for Phasa.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CorrectionMode {
@@ -125,17 +125,29 @@ impl AppConfig {
     /// if the file does not exist or cannot be parsed.
     pub fn load_or_default<P: AsRef<Path>>(path: P) -> Self {
         let path = path.as_ref();
-        if !path.exists() {
-            return Self::default();
-        }
+        let target_path = if !path.exists() {
+            // Check legacy fallback path if loading from default path
+            if let Some(home) = dirs::home_dir() {
+                let legacy = home.join(".config").join("rightlang").join("config.toml");
+                if legacy.exists() {
+                    legacy
+                } else {
+                    return Self::default();
+                }
+            } else {
+                return Self::default();
+            }
+        } else {
+            path.to_path_buf()
+        };
 
-        match fs::read_to_string(path) {
+        match fs::read_to_string(&target_path) {
             Ok(content) => match toml::from_str::<AppConfig>(&content) {
                 Ok(config) => config,
                 Err(err) => {
                     eprintln!(
                         "Warning: Failed to parse config at {:?}: {}. Using defaults.",
-                        path, err
+                        target_path, err
                     );
                     Self::default()
                 }
@@ -143,7 +155,7 @@ impl AppConfig {
             Err(err) => {
                 eprintln!(
                     "Warning: Failed to read config at {:?}: {}. Using defaults.",
-                    path, err
+                    target_path, err
                 );
                 Self::default()
             }
@@ -162,42 +174,60 @@ impl AppConfig {
         fs::write(path, serialized)
     }
 
-    /// Returns the default configuration directory (~/.config/rightlang).
+    /// Returns the default configuration directory (~/.config/phasa).
     pub fn default_config_dir() -> PathBuf {
         default_config_dir()
     }
 
-    /// Returns the default configuration path (~/.config/rightlang/config.toml).
+    /// Returns the default configuration path (~/.config/phasa/config.toml).
     pub fn default_config_path() -> PathBuf {
         default_config_dir().join("config.toml")
     }
 
-    /// Returns the default path for custom Thai user dictionary (~/.config/rightlang/user.th.txt).
+    /// Returns the default path for custom Thai user dictionary (~/.config/phasa/user.th.txt).
     pub fn default_user_thai_dict_path() -> PathBuf {
         default_user_thai_dict_path()
     }
 
-    /// Returns the default path for custom English user dictionary (~/.config/rightlang/user.en.txt).
+    /// Returns the default path for custom English user dictionary (~/.config/phasa/user.en.txt).
     pub fn default_user_eng_dict_path() -> PathBuf {
         default_user_eng_dict_path()
     }
 }
 
-/// Returns the default configuration directory (~/.config/rightlang).
+/// Returns the default configuration directory (~/.config/phasa).
 pub fn default_config_dir() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
-        home.join(".config").join("rightlang")
+        home.join(".config").join("phasa")
     } else {
-        PathBuf::from(".config/rightlang")
+        PathBuf::from(".config/phasa")
     }
 }
 
-/// Returns the default path for custom Thai user dictionary (~/.config/rightlang/user.th.txt).
+/// Returns the default path for custom Thai user dictionary (~/.config/phasa/user.th.txt).
 pub fn default_user_thai_dict_path() -> PathBuf {
-    default_config_dir().join("user.th.txt")
+    let p = default_config_dir().join("user.th.txt");
+    if !p.exists() {
+        if let Some(home) = dirs::home_dir() {
+            let legacy = home.join(".config").join("rightlang").join("user.th.txt");
+            if legacy.exists() {
+                return legacy;
+            }
+        }
+    }
+    p
 }
 
-/// Returns the default path for custom English user dictionary (~/.config/rightlang/user.en.txt).
+/// Returns the default path for custom English user dictionary (~/.config/phasa/user.en.txt).
 pub fn default_user_eng_dict_path() -> PathBuf {
-    default_config_dir().join("user.en.txt")
+    let p = default_config_dir().join("user.en.txt");
+    if !p.exists() {
+        if let Some(home) = dirs::home_dir() {
+            let legacy = home.join(".config").join("rightlang").join("user.en.txt");
+            if legacy.exists() {
+                return legacy;
+            }
+        }
+    }
+    p
 }

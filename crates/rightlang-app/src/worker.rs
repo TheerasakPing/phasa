@@ -240,14 +240,17 @@ impl KeyWorker {
     /// sets the converted text on the clipboard, pastes it via Cmd+V,
     /// and switches the input source language accordingly.
     pub fn convert_selection(&mut self) -> Option<CorrectionRecord> {
-        const CMD_FLAG: u64 = 0x00100000;
-        const KEY_CODE_C: u16 = 0x08;
+        #[cfg(not(test))]
+        {
+            const CMD_FLAG: u64 = 0x00100000;
+            const KEY_CODE_C: u16 = 0x08;
 
-        // 1. Dispatch synthetic Cmd+C to copy current selection
-        let _ = self.dispatcher.send_key_combination(KEY_CODE_C, CMD_FLAG, 5_000);
+            // 1. Dispatch synthetic Cmd+C to copy current selection
+            let _ = self.dispatcher.send_key_combination(KEY_CODE_C, CMD_FLAG, 5_000);
 
-        // 2. Small wait to allow target app to populate clipboard
-        std::thread::sleep(std::time::Duration::from_millis(50));
+            // 2. Small wait to allow target app to populate clipboard
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
 
         // 3. Read clipboard text
         let text = rightlang_macos::clipboard::get_clipboard_text()?;
@@ -256,9 +259,6 @@ impl KeyWorker {
 
     /// Converts given text content between layouts and pastes via clipboard emulation.
     pub fn convert_clipboard_content(&mut self, text: &str) -> Option<CorrectionRecord> {
-        const CMD_FLAG: u64 = 0x00100000;
-        const KEY_CODE_V: u16 = 0x09;
-
         if text.trim().is_empty() {
             return None;
         }
@@ -270,10 +270,15 @@ impl KeyWorker {
 
         // Set translated text on clipboard
         rightlang_macos::clipboard::set_clipboard_text(&converted);
-        std::thread::sleep(std::time::Duration::from_millis(30));
 
-        // Dispatch synthetic Cmd+V to paste
-        let _ = self.dispatcher.send_key_combination(KEY_CODE_V, CMD_FLAG, 5_000);
+        #[cfg(not(test))]
+        {
+            const CMD_FLAG: u64 = 0x00100000;
+            const KEY_CODE_V: u16 = 0x09;
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            // Dispatch synthetic Cmd+V to paste
+            let _ = self.dispatcher.send_key_combination(KEY_CODE_V, CMD_FLAG, 5_000);
+        }
 
         // Detect target language and switch input source
         let target_lang = self.detect_target_language(&converted);
@@ -538,14 +543,24 @@ impl KeyWorker {
 pub fn load_dictionaries() -> DictionaryFilter {
     let mut dict = None;
 
-    // 1. Check ~/.config/rightlang/
+    // 1. Check ~/.config/phasa/ (and fallback ~/.config/rightlang/)
     if let Some(home) = dirs::home_dir() {
-        let dir = home.join(".config").join("rightlang");
+        let dir = home.join(".config").join("phasa");
         let thai = dir.join("thai.txt");
         let eng = dir.join("eng.txt");
         if thai.exists() && eng.exists() {
             if let Ok(d) = DictionaryFilter::load_from_files(&thai, &eng) {
                 dict = Some(d);
+            }
+        }
+        if dict.is_none() {
+            let legacy = home.join(".config").join("rightlang");
+            let thai = legacy.join("thai.txt");
+            let eng = legacy.join("eng.txt");
+            if thai.exists() && eng.exists() {
+                if let Ok(d) = DictionaryFilter::load_from_files(&thai, &eng) {
+                    dict = Some(d);
+                }
             }
         }
     }

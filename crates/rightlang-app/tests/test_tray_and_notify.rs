@@ -18,7 +18,7 @@ fn test_notification_manager_basic_lifecycle() {
     let (title, body) = manager
         .last_notification()
         .expect("Notification must be recorded");
-    assert_eq!(title, "RightLang");
+    assert_eq!(title, "Phasa (ภาษา)");
     assert_eq!(body, "8iy[ → ครับ");
 
     // Clear recorded notification
@@ -40,12 +40,12 @@ fn test_notification_manager_formatting_and_unicode() {
     let manager = NotificationManager::new(true);
 
     // Test Thai to English correction
-    manager.notify_correction("้ำสสน", "hello ");
+    manager.notify_correction("้ำลลน", "hello ");
     let (title, body) = manager
         .last_notification()
         .expect("Notification must be recorded");
-    assert_eq!(title, "RightLang");
-    assert_eq!(body, "้ำสสน → hello");
+    assert_eq!(title, "Phasa (ภาษา)");
+    assert_eq!(body, "้ำลลน → hello");
 
     // Test trimming whitespace
     manager.notify_correction("   word   ", "   คำ   ");
@@ -119,8 +119,8 @@ fn test_launchd_service_xml_generation_and_file_ops() {
         .path()
         .join("LaunchAgents")
         .join(service::LAUNCHD_PLIST_FILENAME);
-    let fake_exe = tmp.path().join("bin").join("rightlang-daemon");
-    let config_dir = tmp.path().join(".config").join("rightlang");
+    let fake_exe = tmp.path().join("bin").join("phasa");
+    let config_dir = tmp.path().join(".config").join("phasa");
 
     // 1. Generate XML
     let xml = service::generate_plist_xml(
@@ -128,7 +128,7 @@ fn test_launchd_service_xml_generation_and_file_ops() {
         &config_dir.join("stdout.log"),
         &config_dir.join("stderr.log"),
     );
-    assert!(xml.contains("com.rightlang.daemon"));
+    assert!(xml.contains("com.phasa.daemon"));
     assert!(xml.contains("<key>RunAtLoad</key>"));
     assert!(xml.contains("<true/>"));
     assert!(xml.contains("<key>KeepAlive</key>"));
@@ -157,7 +157,7 @@ fn test_tray_dock_policy_execution() {
 
 #[test]
 fn test_tray_open_config_dir() {
-    // open_config_dir ensures ~/.config/rightlang exists
+    // open_config_dir ensures ~/.config/phasa exists
     let res = TrayManager::open_config_dir();
     assert!(res.is_ok());
 }
