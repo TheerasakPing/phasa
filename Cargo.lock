@@ -982,6 +982,9 @@ dependencies = [
 [[package]]
 name = "rightlang-core"
 version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "rightlang-macos"
