@@ -139,9 +139,7 @@ fn test_event_tap_lifecycle_and_stop() {
     assert!(!listener.is_running());
 
     let listener_clone = Arc::clone(&listener);
-    let worker_thread = std::thread::spawn(move || {
-        listener_clone.run()
-    });
+    let worker_thread = std::thread::spawn(move || listener_clone.run());
 
     // Wait briefly for runloop to start
     std::thread::sleep(Duration::from_millis(60));

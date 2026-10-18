@@ -108,8 +108,7 @@ unsafe extern "C" fn tap_callback(
         };
 
         // Determine if event is synthetic (non-hardware or has custom user data)
-        let source_state =
-            ffi::CGEventGetIntegerValueField(event, ffi::K_CG_EVENT_SOURCE_STATE_ID);
+        let source_state = ffi::CGEventGetIntegerValueField(event, ffi::K_CG_EVENT_SOURCE_STATE_ID);
         let is_synthetic = source_state != 1 || user_data != 0;
 
         let key_event = KeyEvent {
@@ -207,7 +206,9 @@ impl EventTapListener {
 
         let current_run_loop = unsafe { ffi::CFRunLoopGetCurrent() };
         if current_run_loop.is_null() {
-            return Err(HookError::RunLoopError("Failed to get current CFRunLoop".into()));
+            return Err(HookError::RunLoopError(
+                "Failed to get current CFRunLoop".into(),
+            ));
         }
 
         self.run_loop.store(current_run_loop as _, Ordering::SeqCst);

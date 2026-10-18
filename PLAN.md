@@ -150,8 +150,7 @@
 
 ---
 
-### Task 4: macOS Event Tap Hook & Event Filtering (`rightlang-macos`)
-
+### Task 4: macOS Event Tap Hook & Event Filtering (`rightlang-macos`)\n
 **Files:**
 - Create: `crates/rightlang-macos/Cargo.toml`
 - Create: `crates/rightlang-macos/src/lib.rs`
@@ -201,10 +200,10 @@
   }
   ```
 
-- [ ] **Step 1: Implement Carbon `TISCopyCurrentKeyboardInputSource` and `TISSelectInputSource` FFI**
-- [ ] **Step 2: Implement synthetic backspace generation with `CGEventCreateKeyboardEvent` (KeyCode 0x33)**
-- [ ] **Step 3: Implement Unicode string injection via `CGEventKeyboardSetUnicodeString`**
-- [ ] **Step 4: Commit**
+- [x] **Step 1: Implement Carbon `TISCopyCurrentKeyboardInputSource` and `TISSelectInputSource` FFI**
+- [x] **Step 2: Implement synthetic backspace generation with `CGEventCreateKeyboardEvent` (KeyCode 0x33)**
+- [x] **Step 3: Implement Unicode string injection via `CGEventKeyboardSetUnicodeString`**
+- [x] **Step 4: Commit**
   `git commit -m "feat(macos): implement TIS layout switcher and key dispatcher"`
 
 ---

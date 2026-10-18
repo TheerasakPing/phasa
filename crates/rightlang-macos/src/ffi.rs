@@ -1,8 +1,9 @@
-//! Low-level macOS FFI bindings for CoreGraphics and ApplicationServices.
+//! Low-level macOS FFI bindings for CoreGraphics, ApplicationServices, and Carbon.
 
 use std::ffi::c_void;
 
-pub use core_foundation_sys::base::{Boolean, CFRelease};
+pub use core_foundation_sys::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef};
+pub use core_foundation_sys::base::{Boolean, CFIndex, CFRelease, CFTypeRef};
 pub use core_foundation_sys::dictionary::{
     kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreate,
     CFDictionaryRef,
@@ -10,7 +11,7 @@ pub use core_foundation_sys::dictionary::{
 pub use core_foundation_sys::mach_port::{
     CFMachPortCreateRunLoopSource, CFMachPortInvalidate, CFMachPortRef,
 };
-pub use core_foundation_sys::number::kCFBooleanTrue;
+pub use core_foundation_sys::number::{kCFBooleanTrue, CFBooleanRef};
 pub use core_foundation_sys::runloop::{
     kCFRunLoopCommonModes, CFRunLoopAddSource, CFRunLoopGetCurrent, CFRunLoopRef,
     CFRunLoopRemoveSource, CFRunLoopRun, CFRunLoopSourceRef, CFRunLoopStop,
@@ -69,6 +70,16 @@ pub const K_CG_EVENT_FLAGS_CHANGED: u32 = 12;
 pub const K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFFFFFE;
 pub const K_CG_EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFFFFFF;
 
+// KeyCode constants
+pub const KEY_CODE_BACKSPACE: CGKeyCode = 0x33; // 51
+
+// Carbon Text Input Source (TIS) types and status
+#[repr(C)]
+pub struct __TISInputSource(c_void);
+pub type TISInputSourceRef = *mut __TISInputSource;
+pub type OSStatus = i32;
+pub const NO_ERR: OSStatus = 0;
+
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     pub fn CGEventTapCreate(
@@ -106,10 +117,36 @@ extern "C" {
         virtual_key: CGKeyCode,
         key_down: bool,
     ) -> CGEventRef;
+
+    pub fn CGEventPost(tap: u32, event: CGEventRef);
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     pub static kAXTrustedCheckOptionPrompt: CFStringRef;
     pub fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> Boolean;
+}
+
+#[link(name = "Carbon", kind = "framework")]
+extern "C" {
+    pub static kTISPropertyInputSourceID: CFStringRef;
+    pub static kTISPropertyLocalizedName: CFStringRef;
+    pub static kTISPropertyInputSourceCategory: CFStringRef;
+    pub static kTISPropertyInputSourceLanguages: CFStringRef;
+    pub static kTISPropertyInputSourceIsSelectCapable: CFStringRef;
+    pub static kTISPropertyInputSourceIsEnabled: CFStringRef;
+
+    pub static kTISCategoryKeyboardInputSource: CFStringRef;
+
+    pub fn TISCopyCurrentKeyboardInputSource() -> TISInputSourceRef;
+    pub fn TISCopyCurrentKeyboardLayoutInputSource() -> TISInputSourceRef;
+    pub fn TISCreateInputSourceList(
+        properties: CFDictionaryRef,
+        includeAllInstalled: Boolean,
+    ) -> CFArrayRef;
+    pub fn TISGetInputSourceProperty(
+        source: TISInputSourceRef,
+        propertyKey: CFStringRef,
+    ) -> *const c_void;
+    pub fn TISSelectInputSource(source: TISInputSourceRef) -> OSStatus;
 }
