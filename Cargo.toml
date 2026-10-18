@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/rightlang-core",
+    "crates/rightlang-macos",
+    "crates/rightlang-app",
+]
+resolver = "2"

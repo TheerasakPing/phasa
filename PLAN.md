@@ -58,21 +58,21 @@
   }
   ```
 
-- [ ] **Step 1: Write the failing unit tests for layout conversion**
+- [x] **Step 1: Write the failing unit tests for layout conversion**
   - Test converting English `8iy[` to Thai `ครับ`.
   - Test converting Thai `สวัสดี` to English `l;ylfu`.
   - Test shift key characters (e.g. `!` ↔ `+`, `@` ↔ `๑`).
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
   `cargo test -p rightlang-core --test test_layout`
 
-- [ ] **Step 3: Implement minimal KeyTranslator mapping**
+- [x] **Step 3: Implement minimal KeyTranslator mapping**
   - Implement bidirectional static array/hash map lookup using the exact Kedmanee/QWERTY tables reversed from RightLang.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
   `cargo test -p rightlang-core --test test_layout`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   `git commit -m "feat(core): implement bidirectional keyboard layout translator"`
 
 ---
