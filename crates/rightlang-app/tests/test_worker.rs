@@ -1,5 +1,6 @@
 use rightlang_app::config::{AppConfig, CorrectionMode};
-use rightlang_app::worker::{load_dictionaries, KeyWorker};
+use rightlang_app::worker::KeyWorker;
+use rightlang_core::DictionaryFilter;
 use rightlang_core::Language;
 use rightlang_macos::event::{KeyEvent, KeyEventType};
 
@@ -26,8 +27,17 @@ fn create_test_worker() -> KeyWorker {
         key_delay_us: 0,
         ..Default::default()
     };
-    let dict = load_dictionaries();
+    let mut dict = DictionaryFilter::new();
+    dict.load_thai_str(include_str!("../../../assets/thai.txt"));
+    dict.load_eng_str(include_str!("../../../assets/eng.txt"));
+    dict.shrink_to_fit();
+
     let mut worker = KeyWorker::new(config, dict);
+    if let Ok(td) = tempfile::tempdir() {
+        let path = td.path().to_path_buf();
+        std::mem::forget(td);
+        worker.set_user_dict_paths(path.join("user.th.txt"), path.join("user.en.txt"));
+    }
     worker.set_active_app(Some("com.apple.Safari".to_string()));
     worker
 }
@@ -283,4 +293,42 @@ fn test_worker_manual_mode() {
     worker.handle_event(&create_mock_key_event("["));
     let manual_record = worker.evaluate_and_correct().expect("Manual evaluate should work");
     assert_eq!(manual_record.replacement, "ครับ");
+}
+
+#[test]
+fn test_worker_auto_learn_and_undo_retention() {
+    let mut worker = create_test_worker();
+    worker.config_mut().auto_learn = true;
+
+    let tmp_dir = tempfile::tempdir().expect("create tempdir");
+    let thai_file = tmp_dir.path().join("user.th.txt");
+    let eng_file = tmp_dir.path().join("user.en.txt");
+    worker.set_user_dict_paths(&thai_file, &eng_file);
+
+    // 1. Correcting "8iy[" -> "ครับ" should auto-learn "ครับ" and save to disk
+    for ch in "8iy[".chars() {
+        worker.handle_event(&create_mock_key_event(&ch.to_string()));
+    }
+    let record = worker.handle_event(&create_mock_key_event(" ")).expect("correction");
+    assert_eq!(record.replacement, "ครับ ");
+
+    assert!(worker.dictionary().user_thai_words().contains("ครับ"));
+    assert!(thai_file.exists());
+
+    // 2. Undoing the correction should learn original "8iy[" as an English user word
+    assert!(worker.undo());
+    assert!(worker.dictionary().user_eng_words().contains("8iy["));
+    assert!(eng_file.exists());
+
+    // 3. Since "8iy[" is now known in user_eng_words, typing it again will NOT trigger correction!
+    worker.clear_buffer();
+    for ch in "8iy[".chars() {
+        worker.handle_event(&create_mock_key_event(&ch.to_string()));
+    }
+    let second_res = worker.handle_event(&create_mock_key_event(" "));
+    assert!(second_res.is_none(), "Learned word must not be re-corrected after undo");
+
+    // 4. Test explicit learn_word API
+    assert!(worker.learn_word("customterm", Language::English));
+    assert!(worker.dictionary().contains_english("customterm"));
 }

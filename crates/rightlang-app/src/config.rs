@@ -162,12 +162,42 @@ impl AppConfig {
         fs::write(path, serialized)
     }
 
-    /// Returns the default configuration path (`~/.config/rightlang/config.toml`).
-    pub fn default_config_path() -> PathBuf {
-        if let Some(home) = dirs::home_dir() {
-            home.join(".config").join("rightlang").join("config.toml")
-        } else {
-            PathBuf::from(".config/rightlang/config.toml")
-        }
+    /// Returns the default configuration directory (~/.config/rightlang).
+    pub fn default_config_dir() -> PathBuf {
+        default_config_dir()
     }
+
+    /// Returns the default configuration path (~/.config/rightlang/config.toml).
+    pub fn default_config_path() -> PathBuf {
+        default_config_dir().join("config.toml")
+    }
+
+    /// Returns the default path for custom Thai user dictionary (~/.config/rightlang/user.th.txt).
+    pub fn default_user_thai_dict_path() -> PathBuf {
+        default_user_thai_dict_path()
+    }
+
+    /// Returns the default path for custom English user dictionary (~/.config/rightlang/user.en.txt).
+    pub fn default_user_eng_dict_path() -> PathBuf {
+        default_user_eng_dict_path()
+    }
+}
+
+/// Returns the default configuration directory (~/.config/rightlang).
+pub fn default_config_dir() -> PathBuf {
+    if let Some(home) = dirs::home_dir() {
+        home.join(".config").join("rightlang")
+    } else {
+        PathBuf::from(".config/rightlang")
+    }
+}
+
+/// Returns the default path for custom Thai user dictionary (~/.config/rightlang/user.th.txt).
+pub fn default_user_thai_dict_path() -> PathBuf {
+    default_config_dir().join("user.th.txt")
+}
+
+/// Returns the default path for custom English user dictionary (~/.config/rightlang/user.en.txt).
+pub fn default_user_eng_dict_path() -> PathBuf {
+    default_config_dir().join("user.en.txt")
 }

@@ -1,5 +1,6 @@
 //! Main keyboard event worker state machine and correction pipeline for RightLang.
 
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use rightlang_core::dictionary::Language;
@@ -37,15 +38,21 @@ pub struct KeyWorker {
     buffer: String,
     last_correction: Option<CorrectionRecord>,
     active_app: Option<String>,
+    user_thai_dict_path: PathBuf,
+    user_eng_dict_path: PathBuf,
 }
 
 impl KeyWorker {
     /// Creates a new `KeyWorker` configured with application settings and dual-language dictionaries.
-    pub fn new(config: AppConfig, dictionary: DictionaryFilter) -> Self {
+    pub fn new(config: AppConfig, mut dictionary: DictionaryFilter) -> Self {
         let rule_manager = ApplicationRuleManager::from_config(&config);
         let translator = KeyTranslator::new(KeyboardLayout::Qwerty, KeyboardLayout::Kedmanee);
         let dispatcher = KeyDispatcher::new(config.key_delay_us);
         let input_source_manager = InputSourceManager::new();
+        let user_thai_dict_path = AppConfig::default_user_thai_dict_path();
+        let user_eng_dict_path = AppConfig::default_user_eng_dict_path();
+
+        let _ = dictionary.load_user_words(&user_thai_dict_path, &user_eng_dict_path);
 
         Self {
             config,
@@ -57,7 +64,30 @@ impl KeyWorker {
             buffer: String::new(),
             last_correction: None,
             active_app: None,
+            user_thai_dict_path,
+            user_eng_dict_path,
         }
+    }
+
+    /// Sets custom file paths for user custom dictionaries (useful for isolated tests).
+    pub fn set_user_dict_paths<P: AsRef<Path>>(&mut self, thai_path: P, eng_path: P) {
+        self.user_thai_dict_path = thai_path.as_ref().to_path_buf();
+        self.user_eng_dict_path = eng_path.as_ref().to_path_buf();
+        let _ = self.dictionary.load_user_words(&self.user_thai_dict_path, &self.user_eng_dict_path);
+    }
+
+    /// Returns the active paths for custom Thai and English user dictionaries.
+    pub fn user_dict_paths(&self) -> (&Path, &Path) {
+        (&self.user_thai_dict_path, &self.user_eng_dict_path)
+    }
+
+    /// Learns a word into the user dictionary and persists it to disk if `auto_learn` is enabled.
+    pub fn learn_word(&mut self, word: &str, lang: Language) -> bool {
+        let added = self.dictionary.add_user_word(word, lang);
+        if added && self.config.auto_learn {
+            let _ = self.dictionary.save_user_words(&self.user_thai_dict_path, &self.user_eng_dict_path);
+        }
+        added
     }
 
     /// Process a single incoming `KeyEvent` from the `EventTapListener` channel.
@@ -222,10 +252,15 @@ impl KeyWorker {
 
             let record = CorrectionRecord {
                 original: self.buffer.clone(),
-                replacement,
+                replacement: replacement.clone(),
                 target_language: target_lang,
                 timestamp: Instant::now(),
             };
+
+            // If auto_learn is enabled, automatically learn the valid corrected word
+            if self.config.auto_learn {
+                self.learn_word(replacement.trim(), target_lang);
+            }
 
             self.last_correction = Some(record.clone());
             self.buffer.clear();
@@ -252,6 +287,16 @@ impl KeyWorker {
                 Language::English => {
                     let _ = self.input_source_manager.switch_to_thai();
                 }
+            }
+
+            // If auto_learn is enabled, learning the original word in its source language
+            // ensures the user's intended term is remembered and not erroneously converted again.
+            if self.config.auto_learn {
+                let source_lang = match record.target_language {
+                    Language::Thai => Language::English,
+                    Language::English => Language::Thai,
+                };
+                self.learn_word(record.original.trim(), source_lang);
             }
 
             self.buffer = record.original;
@@ -358,40 +403,72 @@ impl KeyWorker {
 }
 
 /// Loads Thai and English dictionaries from user configuration directory, relative paths,
-/// or embedded binary fallbacks.
+/// app bundle resources, or embedded binary fallbacks.
 pub fn load_dictionaries() -> DictionaryFilter {
+    let mut dict = None;
+
     // 1. Check ~/.config/rightlang/
     if let Some(home) = dirs::home_dir() {
         let dir = home.join(".config").join("rightlang");
         let thai = dir.join("thai.txt");
         let eng = dir.join("eng.txt");
         if thai.exists() && eng.exists() {
-            if let Ok(dict) = DictionaryFilter::load_from_files(&thai, &eng) {
-                return dict;
+            if let Ok(d) = DictionaryFilter::load_from_files(&thai, &eng) {
+                dict = Some(d);
             }
         }
     }
 
-    // 2. Check relative candidate paths
-    let candidates = [
-        ("assets/thai.txt", "assets/eng.txt"),
-        ("../assets/thai.txt", "../assets/eng.txt"),
-        ("../../assets/thai.txt", "../../assets/eng.txt"),
-    ];
-    for (thai_p, eng_p) in candidates {
-        let thai = std::path::Path::new(thai_p);
-        let eng = std::path::Path::new(eng_p);
-        if thai.exists() && eng.exists() {
-            if let Ok(dict) = DictionaryFilter::load_from_files(thai, eng) {
-                return dict;
+    // 2. Check macOS app bundle Resources directory
+    if dict.is_none() {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(macos_dir) = exe_path.parent() {
+                if let Some(contents_dir) = macos_dir.parent() {
+                    let res_dir = contents_dir.join("Resources");
+                    let thai = res_dir.join("thai.txt");
+                    let eng = res_dir.join("eng.txt");
+                    if thai.exists() && eng.exists() {
+                        if let Ok(d) = DictionaryFilter::load_from_files(&thai, &eng) {
+                            dict = Some(d);
+                        }
+                    }
+                }
             }
         }
     }
 
-    // 3. Fallback to embedded dictionary assets
-    let mut dict = DictionaryFilter::new();
-    dict.load_thai_str(include_str!("../../../assets/thai.txt"));
-    dict.load_eng_str(include_str!("../../../assets/eng.txt"));
-    dict.shrink_to_fit();
-    dict
+    // 3. Check relative candidate paths
+    if dict.is_none() {
+        let candidates = [
+            ("assets/thai.txt", "assets/eng.txt"),
+            ("../assets/thai.txt", "../assets/eng.txt"),
+            ("../../assets/thai.txt", "../../assets/eng.txt"),
+        ];
+        for (thai_p, eng_p) in candidates {
+            let thai = std::path::Path::new(thai_p);
+            let eng = std::path::Path::new(eng_p);
+            if thai.exists() && eng.exists() {
+                if let Ok(d) = DictionaryFilter::load_from_files(thai, eng) {
+                    dict = Some(d);
+                    break;
+                }
+            }
+        }
+    }
+
+    // 4. Fallback to embedded dictionary assets
+    let mut loaded = dict.unwrap_or_else(|| {
+        let mut d = DictionaryFilter::new();
+        d.load_thai_str(include_str!("../../../assets/thai.txt"));
+        d.load_eng_str(include_str!("../../../assets/eng.txt"));
+        d.shrink_to_fit();
+        d
+    });
+
+    // 5. Load custom user words from ~/.config/rightlang/user.th.txt and user.en.txt
+    let user_thai = AppConfig::default_user_thai_dict_path();
+    let user_eng = AppConfig::default_user_eng_dict_path();
+    let _ = loaded.load_user_words(&user_thai, &user_eng);
+
+    loaded
 }

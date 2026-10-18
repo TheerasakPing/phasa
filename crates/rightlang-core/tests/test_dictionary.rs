@@ -233,3 +233,49 @@ fn test_performance_constraints() {
         avg_latency
     );
 }
+
+#[test]
+fn test_user_words_addition_and_persistence() {
+    let mut dict = DictionaryFilter::new();
+
+    // Word not in trie or user dict
+    assert!(!dict.contains_thai("คำใหม่พิเศษ"));
+    assert!(!dict.contains_english("supercalifragilistic"));
+
+    // Add user words
+    assert!(dict.add_user_word("คำใหม่พิเศษ", Language::Thai));
+    assert!(dict.add_user_word("supercalifragilistic", Language::English));
+
+    // Duplicate returns false
+    assert!(!dict.add_user_word("คำใหม่พิเศษ", Language::Thai));
+    assert!(!dict.add_user_word("SUPERCALIFRAGILISTIC", Language::English));
+
+    // Membership and language detection
+    assert!(dict.contains_thai("คำใหม่พิเศษ"));
+    assert!(dict.contains_english("supercalifragilistic"));
+    assert!(dict.contains_english("Supercalifragilistic"));
+    assert_eq!(dict.detect_language("คำใหม่พิเศษ"), Some(Language::Thai));
+    assert_eq!(dict.detect_language("supercalifragilistic"), Some(Language::English));
+
+    // User word sets
+    assert_eq!(dict.user_thai_words().len(), 1);
+    assert_eq!(dict.user_eng_words().len(), 1);
+
+    // Persistence test
+    let tmp_dir = tempfile::tempdir().expect("create tempdir");
+    let thai_file = tmp_dir.path().join("user.th.txt");
+    let eng_file = tmp_dir.path().join("user.en.txt");
+
+    dict.save_user_words(&thai_file, &eng_file).expect("save user words");
+    assert!(thai_file.exists());
+    assert!(eng_file.exists());
+
+    // Load into a fresh filter
+    let mut loaded_dict = DictionaryFilter::new();
+    loaded_dict.load_user_words(&thai_file, &eng_file).expect("load user words");
+
+    assert!(loaded_dict.contains_thai("คำใหม่พิเศษ"));
+    assert!(loaded_dict.contains_english("supercalifragilistic"));
+    assert_eq!(loaded_dict.user_thai_words().len(), 1);
+    assert_eq!(loaded_dict.user_eng_words().len(), 1);
+}

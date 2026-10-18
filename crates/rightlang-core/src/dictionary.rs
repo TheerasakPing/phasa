@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -12,11 +13,14 @@ pub enum Language {
     English,
 }
 
-/// Dual-dictionary filter holding compact tries for Thai and English.
+/// Dual-dictionary filter holding compact tries for Thai and English,
+/// along with dynamic user-custom word dictionaries.
 #[derive(Debug, Clone, Default)]
 pub struct DictionaryFilter {
     thai_trie: CompactTrie,
     eng_trie: CompactTrie,
+    user_thai_words: HashSet<String>,
+    user_eng_words: HashSet<String>,
 }
 
 impl DictionaryFilter {
@@ -25,6 +29,8 @@ impl DictionaryFilter {
         Self {
             thai_trie: CompactTrie::new(),
             eng_trie: CompactTrie::new(),
+            user_thai_words: HashSet::new(),
+            user_eng_words: HashSet::new(),
         }
     }
 
@@ -68,31 +74,125 @@ impl DictionaryFilter {
         self.eng_trie.shrink_to_fit();
     }
 
-    /// Checks if a word exists in the Thai dictionary.
-    pub fn contains_thai(&self, word: &str) -> bool {
-        self.thai_trie.contains(word)
-    }
+    /// Adds a custom user word for the given language.
+    /// Returns `true` if the word was newly inserted, or `false` if it was already present.
+    pub fn add_user_word(&mut self, word: &str, lang: Language) -> bool {
+        let trimmed = word.trim().trim_matches('\u{feff}');
+        if trimmed.is_empty() {
+            return false;
+        }
 
-    /// Checks if a word exists in the English dictionary (case-insensitive).
-    pub fn contains_english(&self, word: &str) -> bool {
-        if word.chars().any(|c| c.is_uppercase()) {
-            self.eng_trie.contains(&word.to_lowercase())
-        } else {
-            self.eng_trie.contains(word)
+        match lang {
+            Language::Thai => self.user_thai_words.insert(trimmed.to_string()),
+            Language::English => self.user_eng_words.insert(trimmed.to_lowercase()),
         }
     }
 
-    /// Checks if a prefix exists in the Thai dictionary.
-    pub fn is_thai_prefix(&self, prefix: &str) -> bool {
-        self.thai_trie.is_prefix(prefix)
+    /// Loads user custom words from disk for Thai and English.
+    /// If a file does not exist, it is skipped without error.
+    pub fn load_user_words<P: AsRef<Path>>(
+        &mut self,
+        thai_user_file: P,
+        eng_user_file: P,
+    ) -> io::Result<()> {
+        let thai_path = thai_user_file.as_ref();
+        if thai_path.exists() {
+            let content = fs::read_to_string(thai_path)?;
+            for line in content.lines() {
+                let trimmed = line.trim().trim_matches('\u{feff}');
+                if !trimmed.is_empty() {
+                    self.user_thai_words.insert(trimmed.to_string());
+                }
+            }
+        }
+
+        let eng_path = eng_user_file.as_ref();
+        if eng_path.exists() {
+            let content = fs::read_to_string(eng_path)?;
+            for line in content.lines() {
+                let trimmed = line.trim().trim_matches('\u{feff}');
+                if !trimmed.is_empty() {
+                    self.user_eng_words.insert(trimmed.to_lowercase());
+                }
+            }
+        }
+
+        Ok(())
     }
 
-    /// Checks if a prefix exists in the English dictionary (case-insensitive).
+    /// Saves user custom words to disk sorted alphabetically, creating parent directories if needed.
+    pub fn save_user_words<P: AsRef<Path>>(
+        &self,
+        thai_user_file: P,
+        eng_user_file: P,
+    ) -> io::Result<()> {
+        let thai_path = thai_user_file.as_ref();
+        if let Some(parent) = thai_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut thai_words: Vec<&str> = self.user_thai_words.iter().map(|s| s.as_str()).collect();
+        thai_words.sort_unstable();
+        let mut thai_content = thai_words.join("\n");
+        if !thai_content.is_empty() {
+            thai_content.push('\n');
+        }
+        fs::write(thai_path, thai_content)?;
+
+        let eng_path = eng_user_file.as_ref();
+        if let Some(parent) = eng_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut eng_words: Vec<&str> = self.user_eng_words.iter().map(|s| s.as_str()).collect();
+        eng_words.sort_unstable();
+        let mut eng_content = eng_words.join("\n");
+        if !eng_content.is_empty() {
+            eng_content.push('\n');
+        }
+        fs::write(eng_path, eng_content)?;
+
+        Ok(())
+    }
+
+    /// Returns a reference to the custom Thai user words set.
+    pub fn user_thai_words(&self) -> &HashSet<String> {
+        &self.user_thai_words
+    }
+
+    /// Returns a reference to the custom English user words set.
+    pub fn user_eng_words(&self) -> &HashSet<String> {
+        &self.user_eng_words
+    }
+
+    /// Checks if a word exists in the Thai dictionary or user Thai words.
+    pub fn contains_thai(&self, word: &str) -> bool {
+        self.thai_trie.contains(word) || self.user_thai_words.contains(word)
+    }
+
+    /// Checks if a word exists in the English dictionary or user English words (case-insensitive).
+    pub fn contains_english(&self, word: &str) -> bool {
+        if word.chars().any(|c| c.is_uppercase()) {
+            let lower = word.to_lowercase();
+            self.eng_trie.contains(&lower) || self.user_eng_words.contains(&lower)
+        } else {
+            self.eng_trie.contains(word) || self.user_eng_words.contains(word)
+        }
+    }
+
+    /// Checks if a prefix exists in the Thai dictionary or user Thai words.
+    pub fn is_thai_prefix(&self, prefix: &str) -> bool {
+        self.thai_trie.is_prefix(prefix)
+            || self.user_thai_words.iter().any(|w| w.starts_with(prefix))
+    }
+
+    /// Checks if a prefix exists in the English dictionary or user English words (case-insensitive).
     pub fn is_eng_prefix(&self, prefix: &str) -> bool {
         if prefix.chars().any(|c| c.is_uppercase()) {
-            self.eng_trie.is_prefix(&prefix.to_lowercase())
+            let lower = prefix.to_lowercase();
+            self.eng_trie.is_prefix(&lower)
+                || self.user_eng_words.iter().any(|w| w.starts_with(&lower))
         } else {
             self.eng_trie.is_prefix(prefix)
+                || self.user_eng_words.iter().any(|w| w.starts_with(prefix))
         }
     }
 
@@ -132,7 +232,7 @@ impl DictionaryFilter {
     /// If the buffer is already a valid word in its current script/language, returns `None`
     /// (no mismatch).
     /// Only if the buffer is not valid in its current script, but its converted layout
-    /// counterpart via `KeyTranslator` is valid, returns `Some(target_language)`.
+    /// counterpart via `KeyTranslator` is valid, returns `Some(target_language)`.\
     pub fn detect_mismatched_language(
         &self,
         buffer: &str,
