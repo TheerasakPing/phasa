@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -30,6 +30,7 @@ enum WorkerCommand {
 
 static CMD_TX: Mutex<Option<crossbeam_channel::Sender<WorkerCommand>>> = Mutex::new(None);
 static DICT_REF: Mutex<Option<Arc<DictionaryFilter>>> = Mutex::new(None);
+static PENDING_UI_MODE: AtomicI32 = AtomicI32::new(-1);
 
 extern "C" fn on_playground_input(input_ptr: *const std::os::raw::c_char) {
     if input_ptr.is_null() {
@@ -48,7 +49,7 @@ extern "C" fn on_playground_input(input_ptr: *const std::os::raw::c_char) {
     if let Ok(lock) = DICT_REF.lock() {
         if let Some(ref dict) = *lock {
             if let Some(target) = dict.detect_mismatched_language(&input, &translator) {
-                let res = format!("{}  ➜  {} (ตรวจพบภาษา {:?})", input, converted, target);
+                let res = format!("{}  ➔  {} (ตรวจพบภาษา {:?})", input, converted, target);
                 DashboardUI::set_playground_result(&res);
                 return;
             } else if let Some(lang) = dict.detect_language(&input) {
@@ -59,7 +60,7 @@ extern "C" fn on_playground_input(input_ptr: *const std::os::raw::c_char) {
         }
     }
 
-    let res = format!("{}  ➜  {}", input, converted);
+    let res = format!("{}  ➔  {}", input, converted);
     DashboardUI::set_playground_result(&res);
 }
 
@@ -69,6 +70,7 @@ extern "C" fn on_mode_change(mode_idx: i32) {
         1 => CorrectionMode::Manual,
         _ => CorrectionMode::Disabled,
     };
+    PENDING_UI_MODE.store(mode_idx, Ordering::SeqCst);
     if let Ok(lock) = CMD_TX.lock() {
         if let Some(ref tx) = *lock {
             let _ = tx.send(WorkerCommand::SetMode(mode));
@@ -110,6 +112,19 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
         return;
     }
     let state = unsafe { &mut *(info as *mut TrayTimerState) };
+
+    // Synchronize mode change triggered from Dashboard UI
+    let pending_mode = PENDING_UI_MODE.swap(-1, Ordering::SeqCst);
+    if pending_mode >= 0 {
+        let mode = match pending_mode {
+            0 => CorrectionMode::Auto,
+            1 => CorrectionMode::Manual,
+            _ => CorrectionMode::Disabled,
+        };
+        state.tray_manager.set_mode(mode);
+        println!("[Phasa] Synced tray mode from Dashboard to: {:?}", mode);
+    }
+
     while let Some(action) = state.tray_manager.check_action() {
         match action {
             TrayAction::OpenDashboard => {
@@ -629,21 +644,13 @@ fn main() {
         if let Some(source) = *lock {
             unsafe {
                 CFRunLoopRemoveSource(run_loop, source as _, kCFRunLoopCommonModes);
-                CFRelease(source);
+                CFRelease(source as _);
             }
         }
     }
 
-    drop(timer_state_box);
-
-    // Cleanup and shutdown
-    running.store(false, Ordering::SeqCst);
-    if let Ok(lock) = listener_arc.lock() {
-        if let Some(l) = lock.as_ref() {
-            l.stop();
-        }
-    }
-
+    // Ensure worker finishes
     let _ = worker_handle.join();
-    println!("Phasa daemon stopped cleanly.");
+    drop(timer_state_box);
+    println!("Phasa daemon successfully terminated.");
 }

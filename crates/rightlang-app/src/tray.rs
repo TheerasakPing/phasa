@@ -1,22 +1,26 @@
-//! Native macOS menu bar status item and tray menu management for Phasa.
+//! System menubar tray icon and interactive menu management using `tray-icon` and `muda`.
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use muda::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::config::CorrectionMode;
 
-/// Actions emitted from tray menu item selections.
+static IS_RUNNING: AtomicBool = AtomicBool::new(true);
+
+/// Action triggered by user interacting with the tray menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
-    /// Open the Phasa Dashboard & Settings GUI window.
+    /// Open the native dashboard window.
     OpenDashboard,
-    /// Update the active correction mode.
+    /// Switch the active correction mode.
     SetMode(CorrectionMode),
-    /// Toggle Start at Login LaunchAgent service.
+    /// Toggle autostart (launchd agent).
     ToggleStartAtLogin,
-    /// Open the Phasa configuration folder in Finder / file manager.
+    /// Open configuration directory in Finder.
     OpenConfigDir,
-    /// Open macOS Accessibility Privacy & Security settings.
+    /// Open macOS accessibility settings in System Preferences.
     OpenAccessibility,
     /// Terminate the daemon gracefully.
     Quit,
@@ -28,6 +32,9 @@ pub struct TrayManager {
     tray_icon: Option<TrayIcon>,
     mode_item: Option<MenuItem>,
     perm_item: Option<MenuItem>,
+    auto_item: Option<CheckMenuItem>,
+    manual_item: Option<CheckMenuItem>,
+    disabled_item: Option<CheckMenuItem>,
     start_login_item: Option<CheckMenuItem>,
     current_mode: CorrectionMode,
 }
@@ -43,6 +50,9 @@ impl TrayManager {
                 tray_icon: None,
                 mode_item: None,
                 perm_item: None,
+                auto_item: None,
+                manual_item: None,
+                disabled_item: None,
                 start_login_item: None,
                 current_mode: initial_mode,
             });
@@ -67,9 +77,27 @@ impl TrayManager {
         let mode_item = MenuItem::with_id("mode_info", initial_text, false, None);
 
         let sep1 = PredefinedMenuItem::separator();
-        let item_auto = MenuItem::with_id("set_auto", "Auto (อัตโนมัติ)", true, None);
-        let item_manual = MenuItem::with_id("set_manual", "Manual (แปลงเฉพาะที่เลือก)", true, None);
-        let item_disabled = MenuItem::with_id("set_disabled", "Disabled (ปิดชั่วคราว)", true, None);
+        let item_auto = CheckMenuItem::with_id(
+            "set_auto",
+            "Auto (อัตโนมัติ)",
+            true,
+            initial_mode == CorrectionMode::Auto,
+            None,
+        );
+        let item_manual = CheckMenuItem::with_id(
+            "set_manual",
+            "Manual (แปลงเฉพาะที่เลือก)",
+            true,
+            initial_mode == CorrectionMode::Manual,
+            None,
+        );
+        let item_disabled = CheckMenuItem::with_id(
+            "set_disabled",
+            "Disabled (ปิดชั่วคราว)",
+            true,
+            initial_mode == CorrectionMode::Disabled,
+            None,
+        );
 
         let sep2 = PredefinedMenuItem::separator();
         let is_service_installed = crate::service::is_service_installed();
@@ -130,6 +158,9 @@ impl TrayManager {
             tray_icon,
             mode_item: Some(mode_item),
             perm_item: Some(item_perm),
+            auto_item: Some(item_auto),
+            manual_item: Some(item_manual),
+            disabled_item: Some(item_disabled),
             start_login_item: Some(item_start_login),
             current_mode: initial_mode,
         })
@@ -166,13 +197,12 @@ impl TrayManager {
         true
     }
 
-    /// Sets the macOS application activation policy to Accessory (menubar-only, no Dock icon).
+    /// Sets up macOS Dock and activation policy to run as an accessory/background daemon without a Dock icon.
     #[cfg(target_os = "macos")]
     pub fn setup_dock_policy() {
         if !Self::is_main_thread() {
             return;
         }
-
         use std::ffi::c_void;
         use std::os::raw::c_char;
 
@@ -185,26 +215,27 @@ impl TrayManager {
         }
 
         unsafe {
-            type MsgSendNoArgs = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
-            type MsgSendIsize = unsafe extern "C" fn(*mut c_void, *mut c_void, isize) -> bool;
-            type MsgSendStr = unsafe extern "C" fn(*mut c_void, *mut c_void, *const c_char) -> *mut c_void;
-            type MsgSendVoidWithArg = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void);
             type MsgSendVoid = unsafe extern "C" fn(*mut c_void, *mut c_void);
+            type MsgSendArg = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void);
+            type MsgSendBool = unsafe extern "C" fn(*mut c_void, *mut c_void, i64) -> bool;
+            type MsgSendStr =
+                unsafe extern "C" fn(*mut c_void, *mut c_void, *const c_char) -> *mut c_void;
+            type MsgSendObj = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
 
-            let msg_send: MsgSendNoArgs = std::mem::transmute(objc_msgSend as *const ());
-            let msg_send_isize: MsgSendIsize = std::mem::transmute(objc_msgSend as *const ());
-            let msg_send_str: MsgSendStr = std::mem::transmute(objc_msgSend as *const ());
-            let msg_send_arg: MsgSendVoidWithArg = std::mem::transmute(objc_msgSend as *const ());
+            let msg_send: MsgSendObj = std::mem::transmute(objc_msgSend as *const ());
+            let msg_send_bool: MsgSendBool = std::mem::transmute(objc_msgSend as *const ());
             let msg_send_void: MsgSendVoid = std::mem::transmute(objc_msgSend as *const ());
+            let msg_send_arg: MsgSendArg = std::mem::transmute(objc_msgSend as *const ());
+            let msg_send_str: MsgSendStr = std::mem::transmute(objc_msgSend as *const ());
 
-            let cls_nsapp = objc_getClass(c"NSApplication".as_ptr());
-            if !cls_nsapp.is_null() {
+            // NSApplicationActivationPolicyAccessory = 1
+            let cls_app = objc_getClass(c"NSApplication".as_ptr());
+            if !cls_app.is_null() {
                 let sel_shared = sel_registerName(c"sharedApplication".as_ptr());
-                let app = msg_send(cls_nsapp, sel_shared);
+                let app = msg_send(cls_app, sel_shared);
                 if !app.is_null() {
-                    let sel_policy = sel_registerName(c"setActivationPolicy:".as_ptr());
-                    // NSApplicationActivationPolicyAccessory = 1
-                    let _ = msg_send_isize(app, sel_policy, 1);
+                    let sel_set_policy = sel_registerName(c"setActivationPolicy:".as_ptr());
+                    msg_send_bool(app, sel_set_policy, 1);
                 }
             }
 
@@ -243,6 +274,15 @@ impl TrayManager {
         if let Some(ref item) = self.mode_item {
             item.set_text(format!("Mode: {}", display));
         }
+        if let Some(ref item) = self.auto_item {
+            item.set_checked(mode == CorrectionMode::Auto);
+        }
+        if let Some(ref item) = self.manual_item {
+            item.set_checked(mode == CorrectionMode::Manual);
+        }
+        if let Some(ref item) = self.disabled_item {
+            item.set_checked(mode == CorrectionMode::Disabled);
+        }
         if let Some(tray) = &mut self.tray_icon {
             let _ = tray.set_tooltip(Some(format!("Phasa (ภาษา) - {}", display)));
         }
@@ -272,7 +312,7 @@ impl TrayManager {
         }
     }
 
-    /// Maps a menu item identifier to a `TrayAction`.
+    /// Maps a menu item identifier to a `TrayAction` LOGIC.
     pub fn action_from_id(id: &str) -> Option<TrayAction> {
         match id {
             "open_dashboard" => Some(TrayAction::OpenDashboard),
@@ -298,7 +338,9 @@ impl TrayManager {
                 item.set_enabled(true);
             }
         }
-        if !granted {
+        if granted {
+            self.set_mode(self.current_mode);
+        } else {
             if let Some(ref item) = self.mode_item {
                 item.set_text("Status: ⚠️ Waiting for Accessibility Permission");
             }
@@ -359,14 +401,25 @@ impl TrayManager {
                         // Sleek deep violet-cyan fill
                         rgba.extend_from_slice(&[14, 165, 233, 255]);
                     } else {
-                        rgba.extend_from_slice(&[0, 0, 0, 0]);
+                        rgba.extend_from_slice(&[30, 41, 59, 255]);
                     }
                 } else {
+                    // Transparent outer edge
                     rgba.extend_from_slice(&[0, 0, 0, 0]);
                 }
             }
         }
 
         Icon::from_rgba(rgba, WIDTH, HEIGHT).ok()
+    }
+
+    /// Checks if the application should keep running.
+    pub fn is_running() -> bool {
+        IS_RUNNING.load(Ordering::SeqCst)
+    }
+
+    /// Requests shutdown of the application.
+    pub fn stop() {
+        IS_RUNNING.store(false, Ordering::SeqCst);
     }
 }
