@@ -15,7 +15,9 @@ use rightlang_app::config::{AppConfig, CorrectionMode};
 use rightlang_app::notify::NotificationManager;
 use rightlang_app::tray::{TrayAction, TrayManager};
 use rightlang_app::worker::{load_dictionaries, KeyWorker};
+use rightlang_core::layout::{KeyTranslator, KeyboardLayout};
 use rightlang_macos::hook::{is_accessibility_trusted, EventTapListener};
+use rightlang_macos::tis::InputSourceManager;
 
 /// Commands sent from the menubar tray or UI thread to the keyboard worker thread.
 enum WorkerCommand {
@@ -55,7 +57,333 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
     }
 }
 
+fn print_help() {
+    println!(
+        r#"RightLang-RS Daemon {}
+Automatic Thai <-> English keyboard layout corrector for macOS
+
+USAGE:
+    rightlang-daemon [OPTIONS]
+
+OPTIONS:
+    -h, --help               Print this help text and exit
+    -v, --version            Print version information and exit
+    --convert <TEXT>         Convert string directly between layouts and exit
+    --check <TEXT>           Check language and dictionary membership and exit
+    --status                 Display accessibility, input source, and daemon diagnostics
+    --install-service        Install and load launchd agent (~/Library/LaunchAgents)
+    --uninstall-service      Unload and remove launchd agent
+"#,
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+fn print_status() {
+    println!("=== RightLang-RS Diagnostics & Status ===");
+    println!("Version: {}", env!("CARGO_PKG_VERSION"));
+
+    // 1. Accessibility permissions
+    let access = is_accessibility_trusted(false);
+    println!("\n[Accessibility Permissions]");
+    if access {
+        println!("  Status: GRANTED (EventTap is enabled to intercept keys)");
+    } else {
+        println!("  Status: NOT GRANTED");
+        println!("  Please enable in: System Settings -> Privacy & Security -> Accessibility");
+    }
+
+    // 2. Active Input Source
+    println!("
+[Input Sources (TIS)]");
+    let tis = InputSourceManager::new();
+    match tis.get_current_source_id() {
+        Ok(id) => println!("  Active Source ID: {}", id),
+        Err(err) => println!("  Active Source: <Unavailable: {}>", err),
+    }
+
+    match tis.list_keyboard_input_sources() {
+        Ok(sources) => {
+            println!("  Enabled Keyboard Sources ({} found):", sources.len());
+            for src in sources {
+                let is_th = src.languages.iter().any(|l| l.starts_with("th"));
+                let is_en = src.languages.iter().any(|l| l.starts_with("en"));
+                let flag = if is_th {
+                    "[TH]"
+                } else if is_en {
+                    "[EN]"
+                } else {
+                    "    "
+                };
+                println!("    {} {} ({})", flag, src.name, src.id);
+            }
+        }
+        Err(err) => {
+            println!("  Failed to list input sources: {}", err);
+        }
+    }
+
+    // 3. Dictionaries & Word Counts
+    println!("\n[Dictionaries]");
+    let dict = load_dictionaries();
+    println!("  Standard Thai words:    {}", dict.thai_trie().len());
+    println!("  Standard English words: {}", dict.eng_trie().len());
+    println!("  Custom User Thai words: {}", dict.user_thai_words().len());
+    println!("  Custom User Eng words:  {}", dict.user_eng_words().len());
+
+    // 4. Configuration & Paths
+    println!("\n[Paths & Configuration]");
+    let cfg_path = AppConfig::default_config_path();
+    let th_user = AppConfig::default_user_thai_dict_path();
+    let en_user = AppConfig::default_user_eng_dict_path();
+    println!(
+        "  Config File:       {:?} (exists: {})",
+        cfg_path,
+        cfg_path.exists()
+    );
+    println!(
+        "  User Thai Dict:    {:?} (exists: {})",
+        th_user,
+        th_user.exists()
+    );
+    println!(
+        "  User English Dict: {:?} (exists: {})",
+        en_user,
+        en_user.exists()
+    );
+
+    // 5. LaunchAgent Service
+    println!("\n[LaunchAgent Service]");
+    if let Some(home) = dirs::home_dir() {
+        let plist_path = home.join("Library/LaunchAgents/com.rightlang.daemon.plist");
+        println!(
+            "  Service Plist:     {:?} (installed: {})",
+            plist_path,
+            plist_path.exists()
+        );
+    }
+    println!("=========================================");
+}
+
+fn install_launchd_service() {
+    let current_exe = match std::env::current_exe() {
+        Ok(path) => match std::fs::canonicalize(&path) {
+            Ok(p) => p,
+            Err(_) => path,
+        },
+        Err(err) => {
+            eprintln!("Error determining executable path: {}", err);
+            std::process::exit(1);
+        }
+    };
+
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => {
+            eprintln!("Error: Cannot resolve user home directory.");
+            std::process::exit(1);
+        }
+    };
+
+    let launch_agents_dir = home.join("Library").join("LaunchAgents");
+    if let Err(err) = std::fs::create_dir_all(&launch_agents_dir) {
+        eprintln!("Error creating ~/Library/LaunchAgents directory: {}", err);
+        std::process::exit(1);
+    }
+
+    let config_dir = AppConfig::default_config_dir();
+    let _ = std::fs::create_dir_all(&config_dir);
+
+    let plist_path = launch_agents_dir.join("com.rightlang.daemon.plist");
+    let log_path = config_dir.join("daemon.log");
+    let err_log_path = config_dir.join("daemon.err.log");
+
+    let plist_content = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rightlang.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{}</string>
+    <key>StandardErrorPath</key>
+    <string>{}</string>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>
+"#,
+        current_exe.display(),
+        log_path.display(),
+        err_log_path.display(),
+    );
+
+    if let Err(err) = std::fs::write(&plist_path, plist_content) {
+        eprintln!("Error writing LaunchAgent plist at {:?}: {}", plist_path, err);
+        std::process::exit(1);
+    }
+
+    // Try unload first in case it's currently registered
+    let _ = std::process::Command::new("launchctl")
+        .arg("unload")
+        .arg(&plist_path)
+        .output();
+
+    let load_output = std::process::Command::new("launchctl")
+        .arg("load")
+        .arg(&plist_path)
+        .output();
+
+    match load_output {
+        Ok(out) if out.status.success() => {
+            println!("Successfully installed and loaded RightLang LaunchAgent:");
+            println!("  Plist:  {:?}", plist_path);
+            println!("  Binary: {:?}", current_exe);
+            println!("  Logs:   {:?}", log_path);
+            println!("RightLang is now running and will auto-start upon login!");
+        }
+        Ok(out) => {
+            let err_msg = String::from_utf8_lossy(&out.stderr);
+            eprintln!(
+                "Warning: LaunchAgent written to {:?}, but launchctl load reported:\n{}",
+                plist_path, err_msg
+            );
+        }
+        Err(err) => {
+            eprintln!(
+                "LaunchAgent written to {:?}, but failed to invoke launchctl: {}",
+                plist_path, err
+            );
+        }
+    }
+}
+
+fn uninstall_launchd_service() {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => {
+            eprintln!("Error: Cannot resolve user home directory.");
+            std::process::exit(1);
+        }
+    };
+
+    let plist_path = home.join("Library/LaunchAgents/com.rightlang.daemon.plist");
+    if plist_path.exists() {
+        let _ = std::process::Command::new("launchctl")
+            .arg("unload")
+            .arg(&plist_path)
+            .output();
+
+        if let Err(err) = std::fs::remove_file(&plist_path) {
+            eprintln!("Error removing plist at {:?}: {}", plist_path, err);
+            std::process::exit(1);
+        }
+        println!("Successfully unloaded and removed {:?}", plist_path);
+    } else {
+        println!("No LaunchAgent found at {:?}", plist_path);
+    }
+}
+
+fn handle_cli_args(args: &[String]) {
+    if args.len() <= 1 {
+        return;
+    }
+
+    match args[1].as_str() {
+        "-h" | "--help" => {
+            print_help();
+            std::process::exit(0);
+        }
+        "-v" | "--version" => {
+            println!("rightlang-daemon {}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+        "--convert" => {
+            if args.len() < 3 {
+                eprintln!(
+                    "Error: --convert requires a text argument.\nUsage: rightlang-daemon --convert <TEXT>"
+                );
+                std::process::exit(1);
+            }
+            let text = &args[2];
+            let translator = KeyTranslator::new(KeyboardLayout::Qwerty, KeyboardLayout::Kedmanee);
+            let converted = translator.convert_str(text);
+            println!("{}", converted);
+            std::process::exit(0);
+        }
+        "--check" => {
+            if args.len() < 3 {
+                eprintln!(
+                    "Error: --check requires a text argument.\nUsage: rightlang-daemon --check <TEXT>"
+                );
+                std::process::exit(1);
+            }
+            let text = &args[2];
+            let dict = load_dictionaries();
+            let translator = KeyTranslator::new(KeyboardLayout::Qwerty, KeyboardLayout::Kedmanee);
+
+            let lang = dict.detect_language(text);
+            let in_th = dict.contains_thai(text);
+            let in_en = dict.contains_english(text);
+            let user_th = dict.user_thai_words().contains(text);
+            let user_en = dict.user_eng_words().contains(&text.to_lowercase());
+            let converted = translator.convert_str(text);
+            let conv_lang = dict.detect_language(&converted);
+            let mismatch = dict.detect_mismatched_language(text, &translator);
+
+            println!("Check Results for \"{}\":", text);
+            println!("  Detected Language:       {:?}", lang);
+            println!("  In Thai Dictionary:      {} (User custom: {})", in_th, user_th);
+            println!("  In English Dictionary:   {} (User custom: {})", in_en, user_en);
+            println!("  Converted Layout:        \"{}\"", converted);
+            println!("  Converted Language:      {:?}", conv_lang);
+            println!("  Language Mismatch:       {:?}", mismatch);
+            if let Some(target) = mismatch {
+                println!("  -> Suggested Correction: \"{}\" ({:?})", converted, target);
+            } else if in_th || in_en {
+                println!(
+                    "  -> Text is already a valid dictionary word in {:?}",
+                    lang.unwrap()
+                );
+            } else {
+                println!("  -> Word not recognized in dictionary");
+            }
+            std::process::exit(0);
+        }
+        "--status" => {
+            print_status();
+            std::process::exit(0);
+        }
+        "--install-service" => {
+            install_launchd_service();
+            std::process::exit(0);
+        }
+        "--uninstall-service" => {
+            uninstall_launchd_service();
+            std::process::exit(0);
+        }
+        unknown => {
+            eprintln!(
+                "Unknown option: {}\nRun 'rightlang-daemon --help' for available options.",
+                unknown
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    handle_cli_args(&args);
+
     println!("Starting RightLang-RS Daemon...");
 
     // Configure macOS application dock policy (Accessory / Menubar-only)
