@@ -2,8 +2,15 @@
 name = "rightlang-app"
 version = "0.1.0"
 edition = "2021"
+default-run = "rightlang-daemon"
+
+[[bin]]
+name = "rightlang-daemon"
+path = "src/main.rs"
 
 [dependencies]
+crossbeam-channel = "0.5.17"
+ctrlc = "3.5.2"
 dirs = "6.0"
 rightlang-core = { path = "../rightlang-core" }
 rightlang-macos = { path = "../rightlang-macos" }

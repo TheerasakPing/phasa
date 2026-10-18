@@ -247,10 +247,10 @@
 - Wires all crates together:
   `EventTapListener` → `crossbeam_channel` → `KeyWorker` (`keyBuffer` + `TrieFilter` + `KeyTranslator`) → `KeyDispatcher` + `InputSourceManager`.
 
-- [ ] **Step 1: Implement Worker State Machine (Buffering, Matching, Triggering, Undo)**
-- [ ] **Step 2: Implement Undo mechanism (restoring previous state if user presses undo shortcut)**
-- [ ] **Step 3: End-to-end integration test with mock events**
-- [ ] **Step 4: Commit**
+- [x] **Step 1: Implement Worker State Machine (Buffering, Matching, Triggering, Undo)**
+- [x] **Step 2: Implement Undo mechanism (restoring previous state if user presses undo shortcut)**
+- [x] **Step 3: End-to-end integration test with mock events**
+- [x] **Step 4: Commit**
   `git commit -m "feat(app): integrate worker loop and end-to-end event pipeline"`
 
 ---
