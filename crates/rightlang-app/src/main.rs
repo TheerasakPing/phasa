@@ -4,13 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use core_foundation_sys::base::{kCFAllocatorDefault, CFRelease};
-use core_foundation_sys::date::CFAbsoluteTimeGetCurrent;
-use core_foundation_sys::runloop::{
-    kCFRunLoopCommonModes, CFRunLoopAddTimer, CFRunLoopGetCurrent, CFRunLoopRemoveSource,
-    CFRunLoopRemoveTimer, CFRunLoopTimerContext, CFRunLoopTimerCreate, CFRunLoopTimerInvalidate,
-    CFRunLoopTimerRef,
-};
+use core_foundation_sys::base::CFRelease;
+use core_foundation_sys::runloop::{kCFRunLoopCommonModes, CFRunLoopGetCurrent, CFRunLoopRemoveSource};
 use crossbeam_channel::unbounded;
 use rightlang_app::config::{AppConfig, CorrectionMode};
 use rightlang_app::notify::NotificationManager;
@@ -107,11 +102,17 @@ struct TrayTimerState {
 unsafe impl Send for TrayTimerState {}
 unsafe impl Sync for TrayTimerState {}
 
-extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) {
-    if info.is_null() {
-        return;
-    }
-    let state = unsafe { &mut *(info as *mut TrayTimerState) };
+static TRAY_STATE: Mutex<Option<TrayTimerState>> = Mutex::new(None);
+
+extern "C" fn on_poll_timer() {
+    let mut lock = match TRAY_STATE.lock() {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    let state = match lock.as_mut() {
+        Some(s) => s,
+        None => return,
+    };
 
     // Synchronize mode change triggered from Dashboard UI
     let pending_mode = PENDING_UI_MODE.swap(-1, Ordering::SeqCst);
@@ -170,31 +171,40 @@ extern "C" fn tray_timer_callback(_timer: CFRunLoopTimerRef, info: *mut c_void) 
         }
     }
 
-    // Check accessibility status dynamically
-    let trusted = is_accessibility_trusted(false);
-    DashboardUI::set_accessibility_status(trusted);
-
+    // Proactively attach EventTapListener or maintain active status
     let needs_attach = state.listener.lock().map(|l| l.is_none()).unwrap_or(false);
     if needs_attach {
-        if trusted {
-            if let Ok(l) = EventTapListener::new(state.event_tx.clone()) {
+        match EventTapListener::new(state.event_tx.clone()) {
+            Ok(l) => {
                 let run_loop = unsafe { CFRunLoopGetCurrent() };
-                if let Ok(source) = l.start_with_run_loop(run_loop as _) {
-                    let arc_l = Arc::new(l);
-                    if let Ok(mut lock) = state.listener.lock() {
-                        *lock = Some(arc_l);
+                match l.start_with_run_loop(run_loop as _) {
+                    Ok(source) => {
+                        let arc_l = Arc::new(l);
+                        if let Ok(mut l_lock) = state.listener.lock() {
+                            *l_lock = Some(arc_l);
+                        }
+                        if let Ok(mut src_lock) = state.source_ptr.lock() {
+                            *src_lock = Some(source as _);
+                        }
+                        state.tray_manager.set_accessibility_status(true);
+                        state.tray_manager.set_mode(state.tray_manager.current_mode());
+                        DashboardUI::set_accessibility_status(true);
+                        println!("[Phasa] Accessibility granted! Event tap attached and active.");
                     }
-                    if let Ok(mut src_lock) = state.source_ptr.lock() {
-                        *src_lock = Some(source as _);
+                    Err(err) => {
+                        eprintln!("[Phasa] Event tap run loop attachment error: {}", err);
                     }
-                    state.tray_manager.set_accessibility_status(true);
-                    state.tray_manager.set_mode(state.tray_manager.current_mode());
-                    println!("[Phasa] Accessibility granted! Event tap attached and active.");
                 }
             }
-        } else {
-            state.tray_manager.set_accessibility_status(false);
+            Err(_) => {
+                let trusted = is_accessibility_trusted(false);
+                state.tray_manager.set_accessibility_status(trusted);
+                DashboardUI::set_accessibility_status(trusted);
+            }
         }
+    } else {
+        DashboardUI::set_accessibility_status(true);
+        state.tray_manager.set_accessibility_status(true);
     }
 }
 
@@ -519,6 +529,7 @@ fn main() {
         on_notify_toggle,
         on_open_config,
         on_open_accessibility,
+        on_poll_timer,
     );
     DashboardUI::init(
         config.mode,
@@ -582,46 +593,18 @@ fn main() {
         eprintln!("Warning: Failed to set Ctrl-C handler: {}", err);
     }
 
-    // Set up CFRunLoopTimer on the main thread to poll tray actions and permissions
-    let mut timer_ref: Option<CFRunLoopTimerRef> = None;
-    let mut timer_state_box: Option<Box<TrayTimerState>> = None;
-
+    // Store state in static TRAY_STATE for the native AppKit polling timer & focus notifications
     if let Some(tm) = tray_manager {
-        let mut state = Box::new(TrayTimerState {
+        let state = TrayTimerState {
             tray_manager: tm,
             cmd_tx,
             running: Arc::clone(&running),
             event_tx: tx,
             listener: Arc::clone(&listener_arc),
             source_ptr: Arc::clone(&source_ptr_arc),
-        });
-
-        let state_ptr = state.as_mut() as *mut TrayTimerState as *mut c_void;
-        timer_state_box = Some(state);
-
-        let mut timer_context = CFRunLoopTimerContext {
-            version: 0,
-            info: state_ptr,
-            retain: None,
-            release: None,
-            copyDescription: None,
         };
-
-        unsafe {
-            let timer = CFRunLoopTimerCreate(
-                kCFAllocatorDefault,
-                CFAbsoluteTimeGetCurrent() + 0.1,
-                0.2,
-                0,
-                0,
-                tray_timer_callback,
-                &mut timer_context,
-            );
-
-            if !timer.is_null() {
-                CFRunLoopAddTimer(run_loop, timer, kCFRunLoopCommonModes);
-                timer_ref = Some(timer);
-            }
+        if let Ok(mut lock) = TRAY_STATE.lock() {
+            *lock = Some(state);
         }
     }
 
@@ -629,15 +612,6 @@ fn main() {
 
     // Run the native AppKit main event loop (keeps app alive indefinitely)
     DashboardUI::run();
-
-    // Cleanup tray timer
-    if let Some(timer) = timer_ref {
-        unsafe {
-            CFRunLoopTimerInvalidate(timer);
-            CFRunLoopRemoveTimer(run_loop, timer, kCFRunLoopCommonModes);
-            CFRelease(timer as _);
-        }
-    }
 
     // Cleanup event tap run loop source
     if let Ok(lock) = source_ptr_arc.lock() {
@@ -651,6 +625,8 @@ fn main() {
 
     // Ensure worker finishes
     let _ = worker_handle.join();
-    drop(timer_state_box);
+    if let Ok(mut lock) = TRAY_STATE.lock() {
+        *lock = None;
+    }
     println!("Phasa daemon successfully terminated.");
 }

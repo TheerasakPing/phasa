@@ -1,4 +1,5 @@
 #import "dashboard.h"
+#import <ApplicationServices/ApplicationServices.h>
 
 static PhasaPlaygroundCallback g_playground_cb = NULL;
 static PhasaModeCallback g_mode_cb = NULL;
@@ -6,6 +7,7 @@ static PhasaToggleCallback g_autostart_cb = NULL;
 static PhasaToggleCallback g_notify_cb = NULL;
 static PhasaActionCallback g_open_config_cb = NULL;
 static PhasaActionCallback g_open_access_cb = NULL;
+static PhasaActionCallback g_poll_timer_cb = NULL;
 
 @interface PhasaWindowController : NSObject <NSWindowDelegate, NSTextFieldDelegate>
 @property (nonatomic, strong) NSWindow *window;
@@ -16,6 +18,7 @@ static PhasaActionCallback g_open_access_cb = NULL;
 @property (nonatomic, strong) NSSegmentedControl *modeControl;
 @property (nonatomic, strong) NSButton *autostartCheckbox;
 @property (nonatomic, strong) NSButton *notifyCheckbox;
+@property (nonatomic, strong) NSTimer *pollTimer;
 @end
 
 static PhasaWindowController *g_controller = nil;
@@ -163,15 +166,53 @@ static PhasaWindowController *g_controller = nil;
     hideWindowBtn.frame = NSMakeRect(425, y + 4, 107, 26);
     hideWindowBtn.bezelStyle = NSBezelStyleRounded;
     [contentView addSubview:hideWindowBtn];
+
+    // Native periodic polling timer running on main runloop in NSRunLoopCommonModes
+    self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:0.25
+                                                      target:self
+                                                    selector:@selector(onPollTimer:)
+                                                    userInfo:nil
+                                                     repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:self.pollTimer forMode:NSRunLoopCommonModes];
+
+    // Immediately re-check when the user switches focus back to Phasa (e.g. from System Settings)
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(onAppBecameActive:)
+                                                 name:NSApplicationDidBecomeActiveNotification
+                                               object:nil];
+}
+
+- (void)onPollTimer:(NSTimer *)timer {
+    if (g_poll_timer_cb) {
+        g_poll_timer_cb();
+    }
+}
+
+- (void)onAppBecameActive:(NSNotification *)note {
+    if (g_poll_timer_cb) {
+        g_poll_timer_cb();
+    }
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self.pollTimer invalidate];
+    self.pollTimer = nil;
 }
 
 #pragma mark - Actions
 
 - (void)onOpenAccessibility:(id)sender {
+    NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+    AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+
     if (g_open_access_cb) {
         g_open_access_cb();
     } else {
         [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"]];
+    }
+    if (g_poll_timer_cb) {
+        g_poll_timer_cb();
     }
 }
 
@@ -357,7 +398,8 @@ void phasa_ui_register_callbacks(
     PhasaToggleCallback autostart_cb,
     PhasaToggleCallback notify_cb,
     PhasaActionCallback open_config_cb,
-    PhasaActionCallback open_access_cb
+    PhasaActionCallback open_access_cb,
+    PhasaActionCallback poll_timer_cb
 ) {
     g_playground_cb = playground_cb;
     g_mode_cb = mode_cb;
@@ -365,4 +407,5 @@ void phasa_ui_register_callbacks(
     g_notify_cb = notify_cb;
     g_open_config_cb = open_config_cb;
     g_open_access_cb = open_access_cb;
+    g_poll_timer_cb = poll_timer_cb;
 }

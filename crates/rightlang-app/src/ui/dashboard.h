@@ -31,7 +31,8 @@ void phasa_ui_register_callbacks(
     PhasaToggleCallback autostart_cb,
     PhasaToggleCallback notify_cb,
     PhasaActionCallback open_config_cb,
-    PhasaActionCallback open_access_cb
+    PhasaActionCallback open_access_cb,
+    PhasaActionCallback poll_timer_cb
 );
 
 #ifdef __cplusplus

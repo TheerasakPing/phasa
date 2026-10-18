@@ -24,6 +24,7 @@ extern "C" {
         notify_cb: extern "C" fn(bool),
         open_config_cb: extern "C" fn(),
         open_access_cb: extern "C" fn(),
+        poll_timer_cb: extern "C" fn(),
     );
 }
 
@@ -107,6 +108,7 @@ impl DashboardUI {
         notify_cb: extern "C" fn(bool),
         open_config_cb: extern "C" fn(),
         open_access_cb: extern "C" fn(),
+        poll_timer_cb: extern "C" fn(),
     ) {
         unsafe {
             phasa_ui_register_callbacks(
@@ -116,6 +118,7 @@ impl DashboardUI {
                 notify_cb,
                 open_config_cb,
                 open_access_cb,
+                poll_timer_cb,
             );
         }
     }
