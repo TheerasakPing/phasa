@@ -36,6 +36,7 @@ impl DictionaryFilter {
                 self.thai_trie.insert(trimmed);
             }
         }
+        self.thai_trie.shrink_to_fit();
     }
 
     /// Loads English words from a string (newline-separated, handles BOM/CRLF/whitespace, converted to lowercase).
@@ -46,6 +47,7 @@ impl DictionaryFilter {
                 self.eng_trie.insert(&trimmed.to_lowercase());
             }
         }
+        self.eng_trie.shrink_to_fit();
     }
 
     /// Loads Thai and English dictionaries from specified file paths.
@@ -56,7 +58,14 @@ impl DictionaryFilter {
         let mut filter = Self::new();
         filter.load_thai_str(&thai_content);
         filter.load_eng_str(&eng_content);
+        filter.shrink_to_fit();
         Ok(filter)
+    }
+
+    /// Shrinks internal memory allocations for both Thai and English tries.
+    pub fn shrink_to_fit(&mut self) {
+        self.thai_trie.shrink_to_fit();
+        self.eng_trie.shrink_to_fit();
     }
 
     /// Checks if a word exists in the Thai dictionary.
@@ -97,10 +106,33 @@ impl DictionaryFilter {
         self.is_thai_prefix(prefix) || self.is_eng_prefix(prefix)
     }
 
-    /// Evaluates a raw input buffer.
+    /// Directly checks what language the raw buffer is in.
     ///
-    /// If buffer (or its converted layout counterpart via `KeyTranslator`) matches Thai or English,
-    /// returns the detected target language.
+    /// Returns `Some(Language::Thai)` if present in the Thai dictionary,
+    /// `Some(Language::English)` if present in the English dictionary,
+    /// or `None` if unrecognized.
+    pub fn detect_language(&self, buffer: &str) -> Option<Language> {
+        let trimmed = buffer.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if self.contains_thai(trimmed) {
+            return Some(Language::Thai);
+        }
+        if self.contains_english(trimmed) {
+            return Some(Language::English);
+        }
+
+        None
+    }
+
+    /// Evaluates an input buffer to detect if it was typed using the wrong keyboard layout.
+    ///
+    /// If the buffer is already a valid word in its current script/language, returns `None`
+    /// (no mismatch).
+    /// Only if the buffer is not valid in its current script, but its converted layout
+    /// counterpart via `KeyTranslator` is valid, returns `Some(target_language)`.
     pub fn detect_mismatched_language(
         &self,
         buffer: &str,
@@ -111,25 +143,14 @@ impl DictionaryFilter {
             return None;
         }
 
+        // If buffer is already valid in its current script/language, return None (no mismatch!)
+        if self.detect_language(trimmed).is_some() {
+            return None;
+        }
+
+        // Only if buffer is NOT valid in its current script, but converted IS valid, return Some(target_language)
         let converted = translator.convert_str(trimmed);
-
-        // Check if converted counterpart matches Thai or English (indicating layout mismatch)
-        if self.contains_thai(&converted) {
-            return Some(Language::Thai);
-        }
-        if self.contains_english(&converted) {
-            return Some(Language::English);
-        }
-
-        // Check if raw buffer itself matches Thai or English
-        if self.contains_thai(trimmed) {
-            return Some(Language::Thai);
-        }
-        if self.contains_english(trimmed) {
-            return Some(Language::English);
-        }
-
-        None
+        self.detect_language(&converted)
     }
 
     /// Returns a reference to the Thai trie.

@@ -104,6 +104,27 @@ fn test_dictionary_load_assets() {
 }
 
 #[test]
+fn test_detect_language() {
+    let thai_path = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/thai.txt"
+    ));
+    let eng_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/eng.txt"));
+
+    let dict = DictionaryFilter::load_from_files(thai_path, eng_path)
+        .expect("Failed to load dictionary asset files");
+
+    assert_eq!(dict.detect_language("สวัสดี"), Some(Language::Thai));
+    assert_eq!(dict.detect_language("hello"), Some(Language::English));
+    assert_eq!(dict.detect_language("me"), Some(Language::English));
+    assert_eq!(dict.detect_language("if"), Some(Language::English));
+    assert_eq!(dict.detect_language("8iy["), None);
+    assert_eq!(dict.detect_language("้ำสสน"), None);
+    assert_eq!(dict.detect_language(""), None);
+    assert_eq!(dict.detect_language("   "), None);
+}
+
+#[test]
 fn test_detect_mismatched_language() {
     let thai_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -143,6 +164,13 @@ fn test_detect_mismatched_language() {
     // Empty or whitespace returns None
     assert_eq!(dict.detect_mismatched_language("", &translator), None);
     assert_eq!(dict.detect_mismatched_language("   ", &translator), None);
+
+    // Precedence test: words typed in their correct layout must NOT trigger mismatch detection
+    assert_eq!(dict.detect_mismatched_language("me", &translator), None);
+    assert_eq!(dict.detect_mismatched_language("if", &translator), None);
+    assert_eq!(dict.detect_mismatched_language("สวัสดี", &translator), None);
+    assert_eq!(dict.detect_mismatched_language("hello", &translator), None);
+    assert_eq!(dict.detect_mismatched_language("ครับ", &translator), None);
 }
 
 #[test]
