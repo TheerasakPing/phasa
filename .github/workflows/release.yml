@@ -1,0 +1,216 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS (${{ matrix.target }})
+    runs-on: macos-13
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch_name: arm64
+          - target: x86_64-apple-darwin
+            arch_name: x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: |
+          cargo build --release --target ${{ matrix.target }} --bin phasa
+
+      - name: Package macOS App Bundle
+        run: |
+          APP_NAME="Phasa.app"
+          DIST_DIR="dist"
+          APP_DIR="${DIST_DIR}/${APP_NAME}"
+          CONTENTS_DIR="${APP_DIR}/Contents"
+          MACOS_DIR="${CONTENTS_DIR}/MacOS"
+          RESOURCES_DIR="${CONTENTS_DIR}/Resources"
+
+          rm -rf "${APP_DIR}"
+          mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
+
+          cp "target/${{ matrix.target }}/release/phasa" "${MACOS_DIR}/phasa"
+          chmod +x "${MACOS_DIR}/phasa"
+
+          cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>phasa</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.phasa.app</string>
+              <key>CFBundleName</key>
+              <string>Phasa</string>
+              <key>CFBundleDisplayName</key>
+              <string>Phasa (ภาษา)</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${{ github.ref_name }}</string>
+              <key>CFBundleVersion</key>
+              <string>${{ github.ref_name }}</string>
+              <key>CFBundleIconFile</key>
+              <string>phasa.icns</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>11.0</string>
+              <key>LSUIElement</key>
+              <true/>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>NSSupportsAutomaticGraphicsSwitching</key>
+              <true/>
+              <key>NSHumanReadableCopyright</key>
+              <string>Copyright © 2026 Phasa Open Source Project. All rights reserved.</string>
+          </dict>
+          </plist>
+          EOF
+
+          if [ -f "assets/phasa.icns" ]; then
+              cp "assets/phasa.icns" "${RESOURCES_DIR}/phasa.icns"
+          fi
+          if [ -d "assets" ]; then
+              cp -v assets/* "${RESOURCES_DIR}/" || true
+          fi
+
+          codesign --force --deep --sign - --requirements '=designated => identifier "com.phasa.app"' "${APP_DIR}"
+
+          cd "${DIST_DIR}"
+          zip -r "../phasa-macos-${{ matrix.arch_name }}.zip" "${APP_NAME}"
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phasa-macos-${{ matrix.arch_name }}
+          path: phasa-macos-${{ matrix.arch_name }}.zip
+
+  build-linux:
+    name: Build Linux (${{ matrix.target }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch_name: x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: |
+          cargo build --release --target ${{ matrix.target }} --bin phasa
+
+      - name: Package Linux archive
+        run: |
+          STAGE_DIR="phasa-linux-${{ matrix.arch_name }}"
+          mkdir -p "${STAGE_DIR}/assets"
+          cp "target/${{ matrix.target }}/release/phasa" "${STAGE_DIR}/"
+          chmod +x "${STAGE_DIR}/phasa"
+          cp -r assets/* "${STAGE_DIR}/assets/"
+          cp README.md "${STAGE_DIR}/"
+          tar -czf "${STAGE_DIR}.tar.gz" "${STAGE_DIR}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phasa-linux-${{ matrix.arch_name }}
+          path: phasa-linux-${{ matrix.arch_name }}.tar.gz
+
+  build-windows:
+    name: Build Windows (${{ matrix.target }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch_name: x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: |
+          cargo build --release --target ${{ matrix.target }} --bin phasa
+
+      - name: Package Windows archive
+        shell: bash
+        run: |
+          STAGE_DIR="phasa-windows-${{ matrix.arch_name }}"
+          mkdir -p "${STAGE_DIR}/assets"
+          cp "target/${{ matrix.target }}/release/phasa.exe" "${STAGE_DIR}/"
+          cp -r assets/* "${STAGE_DIR}/assets/"
+          cp README.md "${STAGE_DIR}/"
+          7z a "${STAGE_DIR}.zip" "${STAGE_DIR}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phasa-windows-${{ matrix.arch_name }}
+          path: phasa-windows-${{ matrix.arch_name }}.zip
+
+  publish-release:
+    name: Publish Release Assets
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Display downloaded files
+        run: |
+          ls -R release-artifacts
+
+      - name: Flatten release artifacts
+        run: |
+          mkdir -p dist-release
+          find release-artifacts -type f -exec cp {} dist-release/ \;
+          ls -lh dist-release/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dist-release/*
+          generate_release_notes: true
+          name: Phasa (ภาษา) ${{ github.ref_name }}
+          draft: false
+          prerelease: false

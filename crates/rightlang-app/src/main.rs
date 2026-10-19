@@ -1,32 +1,53 @@
+#[cfg(target_os = "macos")]
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicI32;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
 use core_foundation_sys::base::CFRelease;
+#[cfg(target_os = "macos")]
 use core_foundation_sys::runloop::{kCFRunLoopCommonModes, CFRunLoopGetCurrent, CFRunLoopRemoveSource};
 use crossbeam_channel::unbounded;
-use rightlang_app::config::{AppConfig, CorrectionMode};
+use rightlang_app::config::AppConfig;
+#[cfg(target_os = "macos")]
+use rightlang_app::config::CorrectionMode;
 use rightlang_app::notify::NotificationManager;
+#[cfg(target_os = "macos")]
 use rightlang_app::tray::{TrayAction, TrayManager};
+#[cfg(target_os = "macos")]
 use rightlang_app::ui::DashboardUI;
 use rightlang_app::worker::{load_dictionaries, KeyWorker};
 use rightlang_core::layout::{KeyTranslator, KeyboardLayout};
+#[cfg(target_os = "macos")]
 use rightlang_core::DictionaryFilter;
+#[cfg(target_os = "macos")]
 use rightlang_macos::event::KeyEvent;
-use rightlang_macos::hook::{is_accessibility_trusted, EventTapListener};
+use rightlang_macos::hook::is_accessibility_trusted;
+#[cfg(target_os = "macos")]
+use rightlang_macos::hook::EventTapListener;
 use rightlang_macos::tis::InputSourceManager;
 
+#[cfg(target_os = "macos")]
 /// Commands sent from the menubar tray or UI thread to the keyboard worker thread.
 enum WorkerCommand {
     SetMode(CorrectionMode),
 }
 
+#[cfg(target_os = "macos")]
 static CMD_TX: Mutex<Option<crossbeam_channel::Sender<WorkerCommand>>> = Mutex::new(None);
+#[cfg(target_os = "macos")]
 static DICT_REF: Mutex<Option<Arc<DictionaryFilter>>> = Mutex::new(None);
+#[cfg(target_os = "macos")]
 static PENDING_UI_MODE: AtomicI32 = AtomicI32::new(-1);
 
+#[cfg(target_os = "macos")]
 extern "C" fn on_playground_input(input_ptr: *const std::os::raw::c_char) {
     if input_ptr.is_null() {
         return;
@@ -59,6 +80,7 @@ extern "C" fn on_playground_input(input_ptr: *const std::os::raw::c_char) {
     DashboardUI::set_playground_result(&res);
 }
 
+#[cfg(target_os = "macos")]
 extern "C" fn on_mode_change(mode_idx: i32) {
     let mode = match mode_idx {
         0 => CorrectionMode::Auto,
@@ -74,22 +96,27 @@ extern "C" fn on_mode_change(mode_idx: i32) {
     }
 }
 
+#[cfg(target_os = "macos")]
 extern "C" fn on_autostart_toggle(_enabled: bool) {
     let _ = rightlang_app::service::toggle_launchd_service();
 }
 
+#[cfg(target_os = "macos")]
 extern "C" fn on_notify_toggle(_enabled: bool) {
     // In-memory toggle
 }
 
+#[cfg(target_os = "macos")]
 extern "C" fn on_open_config() {
     let _ = TrayManager::open_config_dir();
 }
 
+#[cfg(target_os = "macos")]
 extern "C" fn on_open_accessibility() {
     let _ = TrayManager::open_accessibility_settings();
 }
 
+#[cfg(target_os = "macos")]
 struct TrayTimerState {
     tray_manager: TrayManager,
     cmd_tx: crossbeam_channel::Sender<WorkerCommand>,
@@ -99,11 +126,15 @@ struct TrayTimerState {
     source_ptr: Arc<Mutex<Option<*mut c_void>>>,
 }
 
+#[cfg(target_os = "macos")]
 unsafe impl Send for TrayTimerState {}
+#[cfg(target_os = "macos")]
 unsafe impl Sync for TrayTimerState {}
 
+#[cfg(target_os = "macos")]
 static TRAY_STATE: Mutex<Option<TrayTimerState>> = Mutex::new(None);
 
+#[cfg(target_os = "macos")]
 extern "C" fn on_poll_timer() {
     let mut lock = match TRAY_STATE.lock() {
         Ok(l) => l,
@@ -211,7 +242,7 @@ extern "C" fn on_poll_timer() {
 fn print_help() {
     println!(
         r#"Phasa (ภาษา) v{}
-Zero-latency intelligent Thai <-> English keyboard layout corrector for macOS
+Zero-latency intelligent Thai <-> English keyboard layout corrector
 
 USAGE:
     phasa [OPTIONS]
@@ -235,13 +266,16 @@ fn print_status() {
     println!("Version: {}", env!("CARGO_PKG_VERSION"));
 
     // 1. Accessibility permissions
-    let access = is_accessibility_trusted(false);
-    println!("\n[Accessibility Permissions]");
-    if access {
-        println!("  Status: GRANTED (EventTap is enabled to intercept keys)");
-    } else {
-        println!("  Status: NOT GRANTED");
-        println!("  Please enable in: System Settings -> Privacy & Security -> Accessibility");
+    #[cfg(target_os = "macos")]
+    {
+        let access = is_accessibility_trusted(false);
+        println!("\n[Accessibility Permissions]");
+        if access {
+            println!("  Status: GRANTED (EventTap is enabled to intercept keys)");
+        } else {
+            println!("  Status: NOT GRANTED");
+            println!("  Please enable in: System Settings -> Privacy & Security -> Accessibility");
+        }
     }
 
     // 2. Active Input Source
@@ -463,19 +497,16 @@ fn main() {
         dict.eng_trie().len()
     );
 
-    // Save global dictionary ref for live playground
-    if let Ok(mut lock) = DICT_REF.lock() {
-        *lock = Some(Arc::clone(&dict));
+    #[cfg(target_os = "macos")]
+    {
+        // Save global dictionary ref for live playground
+        if let Ok(mut lock) = DICT_REF.lock() {
+            *lock = Some(Arc::clone(&dict));
+        }
     }
 
-    // Channels for keyboard events and worker commands
-    let (tx, rx) = unbounded();
-    let (cmd_tx, cmd_rx) = unbounded();
-
-    // Save global command sender
-    if let Ok(mut lock) = CMD_TX.lock() {
-        *lock = Some(cmd_tx.clone());
-    }
+    // Channels for keyboard events
+    let (_tx, rx) = unbounded();
 
     // Create KeyWorker
     let mut worker = KeyWorker::new(config.clone(), (*dict).clone());
@@ -486,8 +517,17 @@ fn main() {
     let notify_mgr_worker = Arc::clone(&notify_manager);
     let notify_on_correction = config.notify_on_correction;
 
+    #[cfg(target_os = "macos")]
+    let (cmd_tx, cmd_rx) = unbounded();
+
+    #[cfg(target_os = "macos")]
+    if let Ok(mut lock) = CMD_TX.lock() {
+        *lock = Some(cmd_tx.clone());
+    }
+
     let worker_handle = thread::spawn(move || {
         while running_worker.load(Ordering::SeqCst) {
+            #[cfg(target_os = "macos")]
             crossbeam_channel::select! {
                 recv(rx) -> event_res => {
                     match event_res {
@@ -516,117 +556,161 @@ fn main() {
                 }
                 default(Duration::from_millis(200)) => continue,
             }
+
+            #[cfg(not(target_os = "macos"))]
+            crossbeam_channel::select! {
+                recv(rx) -> event_res => {
+                    match event_res {
+                        Ok(event) => {
+                            if let Some(record) = worker.handle_event(&event) {
+                                println!(
+                                    "[Phasa] Corrected '{}' -> '{}' to {:?}",
+                                    record.original, record.replacement, record.target_language
+                                );
+                                if notify_on_correction {
+                                    notify_mgr_worker.notify_correction(&record.original, &record.replacement);
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                default(Duration::from_millis(200)) => continue,
+            }
         }
     });
 
-    let run_loop = unsafe { CFRunLoopGetCurrent() };
+    #[cfg(target_os = "macos")]
+    {
+        let run_loop = unsafe { CFRunLoopGetCurrent() };
 
-    // Register GUI Dashboard Callbacks & Initialize Window
-    DashboardUI::register_callbacks(
-        on_playground_input,
-        on_mode_change,
-        on_autostart_toggle,
-        on_notify_toggle,
-        on_open_config,
-        on_open_accessibility,
-        on_poll_timer,
-    );
-    DashboardUI::init(
-        config.mode,
-        rightlang_app::service::is_service_installed(),
-        config.notify_on_correction,
-    );
-    DashboardUI::set_accessibility_status(initial_trusted);
+        // Register GUI Dashboard Callbacks & Initialize Window
+        DashboardUI::register_callbacks(
+            on_playground_input,
+            on_mode_change,
+            on_autostart_toggle,
+            on_notify_toggle,
+            on_open_config,
+            on_open_accessibility,
+            on_poll_timer,
+        );
+        DashboardUI::init(
+            config.mode,
+            rightlang_app::service::is_service_installed(),
+            config.notify_on_correction,
+        );
+        DashboardUI::set_accessibility_status(initial_trusted);
 
-    // Initialize Status Bar Menubar Tray
-    let mut tray_manager = match TrayManager::new(config.mode) {
-        Ok(tm) => Some(tm),
-        Err(err) => {
-            eprintln!("Warning: Menubar tray initialization failed: {}", err);
-            None
-        }
-    };
-
-    if let Some(ref mut tm) = tray_manager {
-        tm.set_accessibility_status(initial_trusted);
-    }
-
-    // Try to attach EventTapListener if already trusted
-    let mut initial_listener: Option<Arc<EventTapListener>> = None;
-    let mut initial_source: Option<*mut c_void> = None;
-
-    if initial_trusted {
-        match EventTapListener::new(tx.clone()) {
-            Ok(l) => match l.start_with_run_loop(run_loop as _) {
-                Ok(source) => {
-                    initial_listener = Some(Arc::new(l));
-                    initial_source = Some(source as _);
-                    println!("[Phasa] Keyboard event tap successfully hooked on main run loop.");
-                }
-                Err(err) => eprintln!("Warning: Failed to attach event tap: {}", err),
-            },
-            Err(err) => eprintln!("Warning: Failed to create EventTapListener: {}", err),
-        }
-    } else {
-        println!("[Phasa] Waiting for Accessibility permission. Showing Dashboard Window...");
-    }
-
-    // Show Dashboard Window on launch so the user can see status & live playground
-    DashboardUI::show();
-
-    let listener_arc = Arc::new(Mutex::new(initial_listener));
-    let source_ptr_arc = Arc::new(Mutex::new(initial_source));
-
-    // Set up Ctrl+C signal handler for graceful shutdown
-    let listener_signal = Arc::clone(&listener_arc);
-    let running_signal = Arc::clone(&running);
-    if let Err(err) = ctrlc::set_handler(move || {
-        println!("\nShutdown signal received. Stopping Phasa daemon...");
-        running_signal.store(false, Ordering::SeqCst);
-        if let Ok(lock) = listener_signal.lock() {
-            if let Some(l) = lock.as_ref() {
-                l.stop();
+        // Initialize Status Bar Menubar Tray
+        let mut tray_manager = match TrayManager::new(config.mode) {
+            Ok(tm) => Some(tm),
+            Err(err) => {
+                eprintln!("Warning: Menubar tray initialization failed: {}", err);
+                None
             }
-        }
-        DashboardUI::stop();
-    }) {
-        eprintln!("Warning: Failed to set Ctrl-C handler: {}", err);
-    }
-
-    // Store state in static TRAY_STATE for the native AppKit polling timer & focus notifications
-    if let Some(tm) = tray_manager {
-        let state = TrayTimerState {
-            tray_manager: tm,
-            cmd_tx,
-            running: Arc::clone(&running),
-            event_tx: tx,
-            listener: Arc::clone(&listener_arc),
-            source_ptr: Arc::clone(&source_ptr_arc),
         };
+
+        if let Some(ref mut tm) = tray_manager {
+            tm.set_accessibility_status(initial_trusted);
+        }
+
+        // Try to attach EventTapListener if already trusted
+        let mut initial_listener: Option<Arc<EventTapListener>> = None;
+        let mut initial_source: Option<*mut c_void> = None;
+
+        if initial_trusted {
+            match EventTapListener::new(_tx.clone()) {
+                Ok(l) => match l.start_with_run_loop(run_loop as _) {
+                    Ok(source) => {
+                        initial_listener = Some(Arc::new(l));
+                        initial_source = Some(source as _);
+                        println!("[Phasa] Keyboard event tap successfully hooked on main run loop.");
+                    }
+                    Err(err) => eprintln!("Warning: Failed to attach event tap: {}", err),
+                },
+                Err(err) => eprintln!("Warning: Failed to create EventTapListener: {}", err),
+            }
+        } else {
+            println!("[Phasa] Waiting for Accessibility permission. Showing Dashboard Window...");
+        }
+
+        // Show Dashboard Window on launch so the user can see status & live playground
+        DashboardUI::show();
+
+        let listener_arc = Arc::new(Mutex::new(initial_listener));
+        let source_ptr_arc = Arc::new(Mutex::new(initial_source));
+
+        // Set up Ctrl+C signal handler for graceful shutdown
+        let listener_signal = Arc::clone(&listener_arc);
+        let running_signal = Arc::clone(&running);
+        if let Err(err) = ctrlc::set_handler(move || {
+            println!("\nShutdown signal received. Stopping Phasa daemon...");
+            running_signal.store(false, Ordering::SeqCst);
+            if let Ok(lock) = listener_signal.lock() {
+                if let Some(l) = lock.as_ref() {
+                    l.stop();
+                }
+            }
+            DashboardUI::stop();
+        }) {
+            eprintln!("Warning: Failed to set Ctrl-C handler: {}", err);
+        }
+
+        // Store state in static TRAY_STATE for the native AppKit polling timer & focus notifications
+        if let Some(tm) = tray_manager {
+            let state = TrayTimerState {
+                tray_manager: tm,
+                cmd_tx,
+                running: Arc::clone(&running),
+                event_tx: _tx,
+                listener: Arc::clone(&listener_arc),
+                source_ptr: Arc::clone(&source_ptr_arc),
+            };
+            if let Ok(mut lock) = TRAY_STATE.lock() {
+                *lock = Some(state);
+            }
+        }
+
+        println!("Phasa (ภาษา) running with Dashboard. Press Ctrl+C or use the Menubar tray to stop.");
+
+        // Run the native AppKit main event loop (keeps app alive indefinitely)
+        DashboardUI::run();
+
+        // Cleanup event tap run loop source
+        if let Ok(lock) = source_ptr_arc.lock() {
+            if let Some(source) = *lock {
+                unsafe {
+                    CFRunLoopRemoveSource(run_loop, source as _, kCFRunLoopCommonModes);
+                    CFRelease(source as _);
+                }
+            }
+        }
+
         if let Ok(mut lock) = TRAY_STATE.lock() {
-            *lock = Some(state);
+            *lock = None;
         }
     }
 
-    println!("Phasa (ภาษา) running with Dashboard. Press Ctrl+C or use the Menubar tray to stop.");
+    #[cfg(not(target_os = "macos"))]
+    {
+        let running_signal = Arc::clone(&running);
+        if let Err(err) = ctrlc::set_handler(move || {
+            println!("\nShutdown signal received. Stopping Phasa...");
+            running_signal.store(false, Ordering::SeqCst);
+        }) {
+            eprintln!("Warning: Failed to set Ctrl-C handler: {}", err);
+        }
 
-    // Run the native AppKit main event loop (keeps app alive indefinitely)
-    DashboardUI::run();
+        println!("Phasa (ภาษา) CLI is ready.");
+        println!("CLI commands (--convert, --check, --status) are available.");
+        println!("Press Ctrl+C to exit.");
 
-    // Cleanup event tap run loop source
-    if let Ok(lock) = source_ptr_arc.lock() {
-        if let Some(source) = *lock {
-            unsafe {
-                CFRunLoopRemoveSource(run_loop, source as _, kCFRunLoopCommonModes);
-                CFRelease(source as _);
-            }
+        while running.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(500));
         }
     }
 
     // Ensure worker finishes
     let _ = worker_handle.join();
-    if let Ok(mut lock) = TRAY_STATE.lock() {
-        *lock = None;
-    }
     println!("Phasa daemon successfully terminated.");
 }

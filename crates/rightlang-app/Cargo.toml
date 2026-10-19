@@ -9,7 +9,6 @@ name = "phasa"
 path = "src/main.rs"
 
 [dependencies]
-core-foundation-sys = "0.8"
 crossbeam-channel = "0.5.17"
 ctrlc = "3.5.2"
 dirs = "6.0"
@@ -17,9 +16,12 @@ rightlang-core = { path = "../rightlang-core" }
 rightlang-macos = { path = "../rightlang-macos" }
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation-sys = "0.8"
+mac-notification-sys = "0.6"
 tray-icon = "0.26"
 muda = "0.21"
-mac-notification-sys = "0.6"
 
 [build-dependencies]
 cc = "1.0"

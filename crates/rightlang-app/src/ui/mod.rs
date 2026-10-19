@@ -1,10 +1,13 @@
 //! Native macOS AppKit Dashboard & Settings Window for Phasa.
 
-use std::ffi::CString;
-use std::os::raw::c_char;
-
 use crate::config::CorrectionMode;
 
+#[cfg(target_os = "macos")]
+use std::ffi::CString;
+#[cfg(target_os = "macos")]
+use std::os::raw::c_char;
+
+#[cfg(target_os = "macos")]
 extern "C" {
     fn phasa_ui_init(initial_mode: i32, is_autostart: bool, is_notify: bool);
     fn phasa_ui_show_window();
@@ -30,6 +33,7 @@ extern "C" {
 
 pub struct DashboardUI;
 
+#[cfg(target_os = "macos")]
 impl DashboardUI {
     pub fn init(mode: CorrectionMode, is_autostart: bool, is_notify: bool) {
         let m = match mode {
@@ -122,4 +126,27 @@ impl DashboardUI {
             );
         }
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl DashboardUI {
+    pub fn init(_mode: CorrectionMode, _is_autostart: bool, _is_notify: bool) {}
+    pub fn show() {}
+    pub fn hide() {}
+    pub fn is_visible() -> bool { false }
+    pub fn set_accessibility_status(_granted: bool) {}
+    pub fn set_playground_result(_result: &str) {}
+    pub fn set_mode(_mode: CorrectionMode) {}
+    pub fn set_autostart(_enabled: bool) {}
+    pub fn run() {}
+    pub fn stop() {}
+    pub fn register_callbacks(
+        _playground_cb: extern "C" fn(*const std::os::raw::c_char),
+        _mode_cb: extern "C" fn(i32),
+        _autostart_cb: extern "C" fn(bool),
+        _notify_cb: extern "C" fn(bool),
+        _open_config_cb: extern "C" fn(),
+        _open_access_cb: extern "C" fn(),
+        _poll_timer_cb: extern "C" fn(),
+    ) {}
 }
