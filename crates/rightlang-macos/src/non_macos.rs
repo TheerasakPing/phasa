@@ -108,6 +108,10 @@ pub mod hook {
         }
 
         pub fn stop(&self) {}
+        pub fn is_running(&self) -> bool { false }
+        pub fn is_valid(&self) -> bool { false }
+        pub fn is_enabled(&self) -> bool { false }
+        pub fn re_enable(&self) -> bool { false }
     }
 }
 

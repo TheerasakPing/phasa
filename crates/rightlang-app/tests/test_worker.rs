@@ -435,3 +435,22 @@ fn test_worker_auto_learn_and_undo_retention() {
     assert!(worker.learn_word("customterm", Language::English));
     assert!(worker.dictionary().contains_english("customterm"));
 }
+
+#[test]
+fn test_worker_idle_buffer_flush() {
+    let mut worker = create_test_worker();
+    worker.set_buffer_idle_timeout(std::time::Duration::from_millis(50));
+
+    // Type "8iy["
+    for ch in "8iy[".chars() {
+        worker.handle_event(&create_mock_key_event(&ch.to_string()));
+    }
+    assert_eq!(worker.buffer(), "8iy[");
+
+    // Sleep for 60ms to exceed idle timeout
+    std::thread::sleep(std::time::Duration::from_millis(60));
+
+    // Typing a new character after being idle should flush the stale buffer
+    worker.handle_event(&create_mock_key_event("a"));
+    assert_eq!(worker.buffer(), "a");
+}

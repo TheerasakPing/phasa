@@ -285,6 +285,40 @@ impl EventTapListener {
     pub fn is_running(&self) -> bool {
         self.is_running.load(Ordering::SeqCst)
     }
+
+    /// Checks whether the underlying Mach port is still valid and not invalidated by macOS.
+    pub fn is_valid(&self) -> bool {
+        let port = self.mach_port.load(Ordering::SeqCst);
+        if port.is_null() {
+            return false;
+        }
+        unsafe { ffi::CFMachPortIsValid(port as _) != 0 }
+    }
+
+    /// Checks whether the event tap is currently enabled.
+    pub fn is_enabled(&self) -> bool {
+        let port = self.mach_port.load(Ordering::SeqCst);
+        if port.is_null() {
+            return false;
+        }
+        unsafe { ffi::CGEventTapIsEnabled(port as _) }
+    }
+
+    /// Attempts to re-enable the tap if it was disabled by timeout.
+    pub fn re_enable(&self) -> bool {
+        let port = self.mach_port.load(Ordering::SeqCst);
+        if port.is_null() {
+            return false;
+        }
+        unsafe {
+            if ffi::CFMachPortIsValid(port as _) != 0 {
+                ffi::CGEventTapEnable(port as _, true);
+                ffi::CGEventTapIsEnabled(port as _)
+            } else {
+                false
+            }
+        }
+    }
 }
 
 impl Drop for EventTapListener {

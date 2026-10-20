@@ -1,7 +1,7 @@
 //! Main keyboard event worker state machine and correction pipeline for RightLang.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rightlang_core::dictionary::Language;
 use rightlang_core::layout::{KeyTranslator, KeyboardLayout};
@@ -12,6 +12,9 @@ use rightlang_macos::tis::InputSourceManager;
 
 use crate::config::{AppConfig, CorrectionMode};
 use crate::rules::ApplicationRuleManager;
+
+/// Default timeout after which idle typing buffer is automatically cleared (e.g. user paused or walked away).
+pub const DEFAULT_BUFFER_IDLE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Record of an executed text correction event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +40,8 @@ pub struct KeyWorker {
     input_source_manager: InputSourceManager,
     buffer: String,
     last_correction: Option<CorrectionRecord>,
+    last_keystroke_time: Option<Instant>,
+    buffer_idle_timeout: Duration,
     active_app: Option<String>,
     user_thai_dict_path: PathBuf,
     user_eng_dict_path: PathBuf,
@@ -63,6 +68,8 @@ impl KeyWorker {
             input_source_manager,
             buffer: String::new(),
             last_correction: None,
+            last_keystroke_time: None,
+            buffer_idle_timeout: DEFAULT_BUFFER_IDLE_TIMEOUT,
             active_app: None,
             user_thai_dict_path,
             user_eng_dict_path,
@@ -80,6 +87,25 @@ impl KeyWorker {
     /// Returns the active paths for custom Thai and English user dictionaries.
     pub fn user_dict_paths(&self) -> (&Path, &Path) {
         (&self.user_thai_dict_path, &self.user_eng_dict_path)
+    }
+
+    /// Sets a custom buffer idle timeout.
+    pub fn set_buffer_idle_timeout(&mut self, timeout: Duration) {
+        self.buffer_idle_timeout = timeout;
+    }
+
+    /// Flushes the typing buffer if it has been idle longer than `buffer_idle_timeout`.
+    pub fn check_idle_buffer_flush(&mut self) -> bool {
+        if self.buffer.is_empty() {
+            return false;
+        }
+        if let Some(last_time) = self.last_keystroke_time {
+            if last_time.elapsed() >= self.buffer_idle_timeout {
+                self.clear_buffer();
+                return true;
+            }
+        }
+        false
     }
 
     /// Learns a word into the user dictionary and persists it to disk if `auto_learn` is enabled.
@@ -106,6 +132,10 @@ impl KeyWorker {
         if event.is_synthetic {
             return None;
         }
+
+        // Check if buffer has become stale due to user inactivity (e.g. idle > 4s)
+        self.check_idle_buffer_flush();
+        self.last_keystroke_time = Some(Instant::now());
 
         // Key modifier flags
         // macOS kCGEventFlagMaskShift = 0x00020000, Control = 0x00040000,
@@ -304,6 +334,7 @@ impl KeyWorker {
 
         self.last_correction = Some(record.clone());
         self.buffer.clear();
+        self.last_keystroke_time = None;
         Some(record)
     }
 
@@ -400,6 +431,7 @@ impl KeyWorker {
 
             self.last_correction = Some(record.clone());
             self.buffer.clear();
+            self.last_keystroke_time = None;
             Some(record)
         } else {
             None
@@ -436,6 +468,7 @@ impl KeyWorker {
             }
 
             self.buffer = record.original;
+            self.last_keystroke_time = Some(Instant::now());
             true
         } else {
             false
@@ -450,6 +483,7 @@ impl KeyWorker {
     /// Clears the typing buffer.
     pub fn clear_buffer(&mut self) {
         self.buffer.clear();
+        self.last_keystroke_time = None;
     }
 
     /// Updates the global correction mode.

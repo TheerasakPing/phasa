@@ -62,7 +62,7 @@ mod macos_tray {
 
             let menu = Menu::new();
 
-            let header_item = MenuItem::with_id("app_header", "Phasa (ภาษา) v0.1.0", false, None);
+            let header_item = MenuItem::with_id("app_header", "Phasa (ภาษา) v0.1.1", false, None);
             let item_dashboard = MenuItem::with_id(
                 "open_dashboard",
                 "Open Dashboard & Settings (เปิดหน้าต่างควบคุม)...",
@@ -247,6 +247,14 @@ mod macos_tray {
 
                         let sel_disable_sudden = sel_registerName(c"disableSuddenTermination".as_ptr());
                         msg_send_void(p_info, sel_disable_sudden);
+
+                        // NSActivityUserInitiatedAllowingIdleSystemSleep = 0x00FFFFFF
+                        // Prevents macOS App Nap and timer throttling when app is running in background/tray
+                        type MsgSendActivity = unsafe extern "C" fn(*mut c_void, *mut c_void, u64, *mut c_void) -> *mut c_void;
+                        let msg_send_activity: MsgSendActivity = std::mem::transmute(objc_msgSend as *const ());
+                        let sel_begin_activity = sel_registerName(c"beginActivityWithOptions:reason:".as_ptr());
+                        let activity_options: u64 = 0x00FFFFFF;
+                        msg_send_activity(p_info, sel_begin_activity, activity_options, reason);
                     }
                 }
             }

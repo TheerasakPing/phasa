@@ -202,8 +202,44 @@ extern "C" fn on_poll_timer() {
         }
     }
 
-    // Proactively attach EventTapListener or maintain active status
-    let needs_attach = state.listener.lock().map(|l| l.is_none()).unwrap_or(false);
+    // Verify whether existing event tap is still valid and enabled, or needs auto-healing
+    let mut needs_attach = false;
+    if let Ok(mut l_lock) = state.listener.lock() {
+        if let Some(ref l) = *l_lock {
+            if !l.is_valid() {
+                println!("[Phasa] Event tap port invalidated (sleep/wake/lock). Auto-healing event tap...");
+                if let Ok(mut src_lock) = state.source_ptr.lock() {
+                    if let Some(source) = src_lock.take() {
+                        unsafe {
+                            let rl = CFRunLoopGetCurrent();
+                            CFRunLoopRemoveSource(rl, source as _, kCFRunLoopCommonModes);
+                            CFRelease(source as _);
+                        }
+                    }
+                }
+                *l_lock = None;
+                needs_attach = true;
+            } else if !l.is_enabled() {
+                if !l.re_enable() {
+                    println!("[Phasa] Event tap disabled and could not be re-enabled. Recreating listener...");
+                    if let Ok(mut src_lock) = state.source_ptr.lock() {
+                        if let Some(source) = src_lock.take() {
+                            unsafe {
+                                let rl = CFRunLoopGetCurrent();
+                                CFRunLoopRemoveSource(rl, source as _, kCFRunLoopCommonModes);
+                                CFRelease(source as _);
+                            }
+                        }
+                    }
+                    *l_lock = None;
+                    needs_attach = true;
+                }
+            }
+        } else {
+            needs_attach = true;
+        }
+    }
+
     if needs_attach {
         match EventTapListener::new(state.event_tx.clone()) {
             Ok(l) => {
@@ -599,6 +635,7 @@ fn main() {
             rightlang_app::service::is_service_installed(),
             config.notify_on_correction,
         );
+        TrayManager::setup_dock_policy();
         DashboardUI::set_accessibility_status(initial_trusted);
 
         // Initialize Status Bar Menubar Tray

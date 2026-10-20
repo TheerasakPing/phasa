@@ -90,6 +90,11 @@ pub type TISInputSourceRef = *mut __TISInputSource;
 pub type OSStatus = i32;
 pub const NO_ERR: OSStatus = 0;
 
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    pub fn CFMachPortIsValid(port: CFMachPortRef) -> Boolean;
+}
+
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     pub fn CGEventTapCreate(
@@ -102,6 +107,7 @@ extern "C" {
     ) -> CFMachPortRef;
 
     pub fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    pub fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
 
     pub fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
     pub fn CGEventSetIntegerValueField(event: CGEventRef, field: u32, value: i64);
