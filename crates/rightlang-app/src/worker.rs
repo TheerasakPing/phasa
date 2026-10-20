@@ -39,6 +39,7 @@ pub struct KeyWorker {
     dispatcher: KeyDispatcher,
     input_source_manager: InputSourceManager,
     buffer: String,
+    sentence_buffer: String,
     last_correction: Option<CorrectionRecord>,
     last_keystroke_time: Option<Instant>,
     buffer_idle_timeout: Duration,
@@ -67,6 +68,7 @@ impl KeyWorker {
             dispatcher,
             input_source_manager,
             buffer: String::new(),
+            sentence_buffer: String::new(),
             last_correction: None,
             last_keystroke_time: None,
             buffer_idle_timeout: DEFAULT_BUFFER_IDLE_TIMEOUT,
@@ -187,9 +189,25 @@ impl KeyWorker {
             return self.convert_selection();
         }
 
+        // Space key (key code 0x31 = 49) or character " "
+        let is_space = event.key_code == 0x31
+            || event
+                .characters
+                .as_deref()
+                .map(|s| s == " " || s == "\u{00a0}")
+                .unwrap_or(false);
+
+        // Multi-word Sentence Conversion Hotkey: Ctrl + Option + Space OR Option + Shift + Space
+        let is_ctrl_opt_space = is_space && ((event.flags & CTRL_FLAG) != 0) && ((event.flags & ALT_FLAG) != 0);
+        let is_opt_shift_space = is_space && ((event.flags & SHIFT_FLAG) != 0) && ((event.flags & (ALT_FLAG | ALT_DEVICE_FLAG)) != 0);
+        if is_ctrl_opt_space || is_opt_shift_space {
+            return self.convert_sentence();
+        }
+
         // Backspace key (macOS key code 0x33 = 51)
         if event.key_code == 0x33 {
             self.buffer.pop();
+            self.sentence_buffer.pop();
             return None;
         }
 
@@ -212,14 +230,6 @@ impl KeyWorker {
             _ => {}
         }
 
-        // Space key (key code 0x31 = 49) or character " "
-        let is_space = event.key_code == 0x31
-            || event
-                .characters
-                .as_deref()
-                .map(|s| s == " " || s == "\u{00a0}")
-                .unwrap_or(false);
-
         // Check for Manual Mode trigger hotkey: Option + Space
         let is_opt_space = is_space && ((event.flags & (ALT_FLAG | ALT_DEVICE_FLAG)) != 0);
         if is_opt_space {
@@ -237,11 +247,13 @@ impl KeyWorker {
             let mode = self.rule_manager.mode_for_app(&current_app_id);
             if mode == CorrectionMode::Auto {
                 let result = self.evaluate_and_correct_internal(true);
-                if result.is_some() {
-                    return result;
+                if let Some(record) = result {
+                    self.update_sentence_buffer_on_correction(&record.original, &record.replacement);
+                    return Some(record);
                 }
             }
-            self.clear_buffer();
+            self.sentence_buffer.push(' ');
+            self.buffer.clear();
             return None;
         }
 
@@ -254,10 +266,15 @@ impl KeyWorker {
             }
 
             self.buffer.push_str(chars);
+            self.sentence_buffer.push_str(chars);
 
             // Guard against unbounded buffer growth
             if self.buffer.len() > 128 {
-                self.clear_buffer();
+                self.buffer.clear();
+            }
+            if self.sentence_buffer.len() > 256 {
+                let start = self.sentence_buffer.char_indices().map(|(i, _)| i).nth(128).unwrap_or(0);
+                self.sentence_buffer = self.sentence_buffer[start..].to_string();
             }
         }
 
@@ -385,6 +402,12 @@ impl KeyWorker {
             return None;
         }
 
+        // Smart context bypass for URLs, emails, file paths, code syntax, and CLI flags
+        if rightlang_core::bypass::SmartBypass::should_bypass(&self.buffer) {
+            self.clear_buffer();
+            return None;
+        }
+
         let detected = self
             .dictionary
             .detect_mismatched_language(&self.buffer, &self.translator);
@@ -480,10 +503,83 @@ impl KeyWorker {
         &self.buffer
     }
 
-    /// Clears the typing buffer.
+    /// Returns the current multi-word sentence buffer.
+    pub fn sentence_buffer(&self) -> &str {
+        &self.sentence_buffer
+    }
+
+    /// Clears the typing buffer and sentence buffer.
     pub fn clear_buffer(&mut self) {
         self.buffer.clear();
+        self.sentence_buffer.clear();
         self.last_keystroke_time = None;
+    }
+
+    /// Updates the sentence buffer when an auto-correction replacement occurs.
+    fn update_sentence_buffer_on_correction(&mut self, original: &str, replacement: &str) {
+        let orig_trimmed = original.trim();
+        if self.sentence_buffer.ends_with(orig_trimmed) {
+            let new_len = self.sentence_buffer.len() - orig_trimmed.len();
+            self.sentence_buffer.truncate(new_len);
+            self.sentence_buffer.push_str(replacement);
+        } else {
+            self.sentence_buffer = replacement.to_string();
+        }
+    }
+
+    /// Converts the entire recent multi-word sentence buffer between Thai and English layouts.
+    pub fn convert_sentence(&mut self) -> Option<CorrectionRecord> {
+        let sentence_to_convert = if !self.sentence_buffer.trim().is_empty() {
+            self.sentence_buffer.clone()
+        } else if !self.buffer.trim().is_empty() {
+            self.buffer.clone()
+        } else {
+            return None;
+        };
+
+        let trimmed = sentence_to_convert.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let converted = self.translator.convert_str(&sentence_to_convert);
+        if converted == sentence_to_convert {
+            return None;
+        }
+
+        let backspace_count = sentence_to_convert.encode_utf16().count();
+
+        // Dispatch synthetic backspaces and replacement sentence
+        let _ = self.dispatcher.replace_text(
+            backspace_count,
+            &converted,
+            Some(self.config.key_delay_us),
+        );
+
+        // Detect target language and switch input source
+        let target_lang = self.detect_target_language(&converted);
+        match target_lang {
+            Language::Thai => {
+                let _ = self.input_source_manager.switch_to_thai();
+            }
+            Language::English => {
+                let _ = self.input_source_manager.switch_to_english();
+            }
+        }
+
+        let record = CorrectionRecord {
+            original: sentence_to_convert,
+            replacement: converted.clone(),
+            target_language: target_lang,
+            timestamp: Instant::now(),
+        };
+
+        self.last_correction = Some(record.clone());
+        self.sentence_buffer = converted;
+        self.buffer.clear();
+        self.last_keystroke_time = Some(Instant::now());
+
+        Some(record)
     }
 
     /// Updates the global correction mode.

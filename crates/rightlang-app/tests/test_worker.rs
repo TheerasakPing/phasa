@@ -454,3 +454,56 @@ fn test_worker_idle_buffer_flush() {
     worker.handle_event(&create_mock_key_event("a"));
     assert_eq!(worker.buffer(), "a");
 }
+
+#[test]
+fn test_worker_smart_bypass_code_and_urls() {
+    let mut worker = create_test_worker();
+
+    // 1. Typing a URL followed by space should NOT trigger conversion
+    let url = "https://google.com";
+    for ch in url.chars() {
+        worker.handle_event(&create_mock_key_event(&ch.to_string()));
+    }
+    let res = worker.handle_event(&create_mock_key_event(" "));
+    assert!(res.is_none(), "URLs must be bypassed by SmartBypass");
+
+    // 2. Typing CLI flag followed by space should NOT trigger conversion
+    let flag = "--version";
+    for ch in flag.chars() {
+        worker.handle_event(&create_mock_key_event(&ch.to_string()));
+    }
+    let res2 = worker.handle_event(&create_mock_key_event(" "));
+    assert!(res2.is_none(), "CLI flags must be bypassed by SmartBypass");
+}
+
+#[test]
+fn test_worker_multi_word_sentence_conversion() {
+    let mut worker = create_test_worker();
+    // Use Manual mode so space does not auto-correct individual words
+    worker.set_mode(CorrectionMode::Manual);
+
+    // Type multi-word phrase: "8iy[ z," ("ครับ ผม")
+    let phrase = "8iy[ z,";
+    for ch in phrase.chars() {
+        worker.handle_event(&create_mock_key_event(&ch.to_string()));
+    }
+    assert_eq!(worker.sentence_buffer(), "8iy[ z,");
+
+    // Trigger Multi-Word Sentence Conversion with Ctrl + Option + Space
+    const CTRL_FLAG: u64 = 0x00040000;
+    const ALT_FLAG: u64 = 0x00080000;
+    let ctrl_opt_space = KeyEvent::new(
+        0x31,
+        KeyEventType::KeyDown,
+        CTRL_FLAG | ALT_FLAG,
+        Some(" ".into()),
+        false,
+    );
+
+    let record = worker.handle_event(&ctrl_opt_space);
+    assert!(record.is_some(), "Multi-word sentence conversion should succeed");
+    let rec = record.unwrap();
+    assert_eq!(rec.original, "8iy[ z,");
+    assert_eq!(rec.replacement, "ครับ ผม");
+    assert_eq!(rec.target_language, Language::Thai);
+}

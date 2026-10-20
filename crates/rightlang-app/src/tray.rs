@@ -62,7 +62,7 @@ mod macos_tray {
 
             let menu = Menu::new();
 
-            let header_item = MenuItem::with_id("app_header", "Phasa (ภาษา) v0.1.1", false, None);
+            let header_item = MenuItem::with_id("app_header", "Phasa (ภาษา) v0.2.0", false, None);
             let item_dashboard = MenuItem::with_id(
                 "open_dashboard",
                 "Open Dashboard & Settings (เปิดหน้าต่างควบคุม)...",

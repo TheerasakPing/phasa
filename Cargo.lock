@@ -963,7 +963,7 @@ dependencies = [
 
 [[package]]
 name = "rightlang-app"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "cc",
  "core-foundation-sys",
@@ -982,14 +982,14 @@ dependencies = [
 
 [[package]]
 name = "rightlang-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "tempfile",
 ]
 
 [[package]]
 name = "rightlang-macos"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "core-foundation",
  "core-foundation-sys",

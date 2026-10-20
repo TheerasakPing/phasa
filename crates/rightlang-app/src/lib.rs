@@ -1,5 +1,6 @@
 //! Application configuration, rule management, and daemon coordination for Phasa.
 
+pub mod app_lang;
 pub mod config;
 pub mod notify;
 pub mod rules;
@@ -8,6 +9,7 @@ pub mod tray;
 pub mod ui;
 pub mod worker;
 
+pub use app_lang::AppLanguageManager;
 pub use config::{AppConfig, CorrectionMode};
 pub use notify::NotificationManager;
 pub use rules::{get_frontmost_app_bundle_id, ApplicationRuleManager};

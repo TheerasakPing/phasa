@@ -129,6 +129,7 @@ pub mod tis {
         pub languages: Vec<String>,
     }
 
+    #[derive(Debug, Clone)]
     pub struct InputSourceManager;
 
     impl InputSourceManager {
@@ -142,6 +143,10 @@ pub mod tis {
 
         pub fn list_keyboard_input_sources(&self) -> Result<Vec<InputSourceInfo>, TisError> {
             Ok(vec![])
+        }
+
+        pub fn select_input_source(&self, _source_id: &str) -> Result<(), TisError> {
+            Ok(())
         }
 
         pub fn switch_to_thai(&self) -> Result<(), TisError> {

@@ -124,6 +124,7 @@ struct TrayTimerState {
     event_tx: crossbeam_channel::Sender<KeyEvent>,
     listener: Arc<Mutex<Option<Arc<EventTapListener>>>>,
     source_ptr: Arc<Mutex<Option<*mut c_void>>>,
+    app_lang_manager: rightlang_app::app_lang::AppLanguageManager,
 }
 
 #[cfg(target_os = "macos")]
@@ -144,6 +145,11 @@ extern "C" fn on_poll_timer() {
         Some(s) => s,
         None => return,
     };
+
+    // Intelligent Per-App Input Source Memory & Auto-Switching
+    if let Some(frontmost) = rightlang_app::rules::get_frontmost_app_bundle_id() {
+        state.app_lang_manager.on_app_activated(&frontmost);
+    }
 
     // Synchronize mode change triggered from Dashboard UI
     let pending_mode = PENDING_UI_MODE.swap(-1, Ordering::SeqCst);
@@ -702,6 +708,7 @@ fn main() {
                 event_tx: _tx,
                 listener: Arc::clone(&listener_arc),
                 source_ptr: Arc::clone(&source_ptr_arc),
+                app_lang_manager: rightlang_app::app_lang::AppLanguageManager::new(),
             };
             if let Ok(mut lock) = TRAY_STATE.lock() {
                 *lock = Some(state);

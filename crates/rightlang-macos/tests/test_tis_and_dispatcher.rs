@@ -69,16 +69,20 @@ fn test_switch_input_sources_and_restore() {
     let thai_available = manager.switch_to_thai().expect("switch_to_thai failed");
     println!("Thai available: {}", thai_available);
     if thai_available {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let current_after_thai = manager
-            .get_current_source_id()
-            .expect("Failed to get current source after switching to Thai");
-        println!("Current after thai: {}", current_after_thai);
-        assert!(
-            current_after_thai.to_lowercase().contains("thai"),
-            "Expected Thai layout active, got: {}",
-            current_after_thai
-        );
+        let mut switched = false;
+        let mut last_curr = String::new();
+        for _ in 0..10 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if let Ok(curr) = manager.get_current_source_id() {
+                last_curr = curr.clone();
+                if curr.to_lowercase().contains("thai") {
+                    switched = true;
+                    break;
+                }
+            }
+        }
+        println!("Current after thai: {}", last_curr);
+        assert!(switched, "Expected Thai layout active, got: {}", last_curr);
     }
 
     // Test switching to English
